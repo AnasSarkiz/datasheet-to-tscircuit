@@ -14,7 +14,7 @@ export function CodePanel({ job }: { job: Job }) {
   }
 
   return (
-    <div className="code-tab-content">
+    <section className="workspace-card code-card">
       <header className="card-toolbar">
         <div className="toolbar-title">
           <Code2 size={16} />
@@ -33,6 +33,6 @@ export function CodePanel({ job }: { job: Job }) {
       <pre>
         <code>{job.component_code}</code>
       </pre>
-    </div>
+    </section>
   )
 }

@@ -2,6 +2,7 @@ import { ArrowLeft, BookOpen, FileText, GitBranch, WandSparkles } from "lucide-r
 import { AgentLogs } from "./components/agent-logs"
 import { Brand } from "./components/brand"
 import { CircuitPreview } from "./components/circuit-preview"
+import { CodePanel } from "./components/code-panel"
 import { StatusPill } from "./components/status-pill"
 import { UploadPanel } from "./components/upload-panel"
 import { useActiveJob } from "./use-active-job"
@@ -97,6 +98,7 @@ export default function App() {
             <AgentLogs job={job} />
             <div className="preview-column">
               <CircuitPreview job={job} />
+              <CodePanel job={job} />
             </div>
           </div>
         </main>
