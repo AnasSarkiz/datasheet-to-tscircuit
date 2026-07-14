@@ -20,11 +20,17 @@ tsci auth print-token
 ```
 
 Paste the printed token into `.env` as `TSCIRCUIT_JWT`. The file is ignored by
-Git and excluded from the Docker build context. Then start the application:
+Git and excluded from the Docker build context. Then build the image:
 
 ```bash
 mkdir -p .runtime
-docker compose up --build
+bun run build
+```
+
+After the image has built successfully, start the application:
+
+```bash
+bun start
 ```
 
 Open `http://localhost:3000`. Compose publishes the port on host loopback only,
@@ -34,7 +40,7 @@ and `agent.log` files persist under `.runtime/jobs` after the container stops.
 Stop the application with:
 
 ```bash
-docker compose down
+bun run stop
 ```
 
 ## Develop without Docker

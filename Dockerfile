@@ -2,13 +2,13 @@ FROM oven/bun:1.3.9 AS dependencies
 
 WORKDIR /app
 
-COPY package.json ./
-RUN bun install
+COPY package.json bun.lock ./
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 
 FROM dependencies AS build
 
 COPY . .
-RUN bun run build
+RUN bun run build:web
 
 FROM oven/bun:1.3.9 AS runtime
 
@@ -34,4 +34,4 @@ USER bun
 
 EXPOSE 3000
 
-CMD ["bun", "run", "start"]
+CMD ["bun", "run", "start:server"]
