@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applicationSourceNetName } from "@/server/component-workflow/application-endpoint"
 import { parseTypicalApplicationPlan } from "@/server/component-workflow/application-plan"
+import type { ComponentEvidence, PinEvidence } from "@/server/component-evidence"
 import { BunProcessRunner } from "@/server/infrastructure/process"
 import { buildTscircuitSource } from "@/server/infrastructure/tscircuit"
 import { TSCIRCUIT_RUNTIME_CONFIG } from "@/server/job-scaffold/tscircuit-runtime-config"
@@ -181,6 +182,148 @@ test("application endpoints may use the datasheet physical pin number", () => {
   expect(contract.node_groups.flatMap(({ dut_endpoints }) => dut_endpoints).sort()).toEqual([
     "dut.GND",
     "dut.VS",
+  ])
+})
+
+test("package-neutral applications translate a documented source pinout to the selected package", () => {
+  const selected_interface: ModelInterface = {
+    version: 1,
+    part_number: "MULTI-PACKAGE",
+    entry_name: "MULTI_PACKAGE",
+    pins: [
+      ["1", "VCCA", "power_input"],
+      ["6", "GND", "ground"],
+      ["11", "VCCB", "power_input"],
+      ["12", "OE", "input"],
+    ].map(([physical_pin, label, role], index) => ({
+      physical_pin: physical_pin!,
+      component_pin: `pin${physical_pin}`,
+      source_port_id: `source_port_${index}`,
+      spice_node: label!,
+      labels: [label!],
+      role: role!,
+    })),
+  }
+  const source_pins: PinEvidence[] = (
+    [
+      ["1", "VCCA", "power_input"],
+      ["7", "GND", "ground"],
+      ["8", "OE", "input"],
+      ["14", "VCCB", "power_input"],
+    ] as const
+  ).map(([number, label, role]) => ({
+    number: number!,
+    labels: [label!],
+    role: role!,
+    sources: [],
+  }))
+  const source_variant: ComponentEvidence = {
+    version: 1,
+    status: "resolved",
+    part_number: { value: "MULTI-PACKAGE", sources: [] },
+    package: {
+      name: { value: "SOURCE-14", sources: [] },
+      pin_count: { value: 14, sources: [] },
+    },
+    pinout: { pins: source_pins },
+    footprint: {
+      view: "pcb_top",
+      units: "mm",
+      drawing_orientation: { value: "pcb_top", sources: [] },
+      pads: [],
+    },
+    unresolved_ambiguities: [],
+  }
+  const plan = parseTypicalApplicationPlan(
+    {
+      version: 4,
+      availability: "documented",
+      pcb_implementation: "schematic_only",
+      title: "Package-neutral application",
+      description: "The application uses the source package's physical numbering.",
+      source_references: [{ page: 1 }],
+      components: [{ reference: "U1", kind: "integrated_circuit", value: "MULTI-PACKAGE" }],
+      connections: [
+        { net: "VCCA", pins: ["U1.1", "VCCA"] },
+        { net: "GND", pins: ["U1.7", "GND"] },
+        { net: "OE", pins: ["U1.8", "OE"] },
+        { net: "VCCB", pins: ["U1.14", "VCCB"] },
+      ],
+    },
+    { part_number: "MULTI-PACKAGE" },
+  )
+
+  const contract = compileApplicationFixtureContract({
+    plan,
+    model_interface: selected_interface,
+    documented_pinout_variants: [source_variant],
+    source_plan_sha256: PLAN_SHA256,
+    source_pdf_sha256: PDF_SHA256,
+  })
+
+  expect(contract.node_groups.map(({ source_net, dut_endpoints }) => [source_net, dut_endpoints])).toEqual([
+    ["VCCA", ["dut.VCCA"]],
+    ["GND", ["dut.GND"]],
+    ["OE", ["dut.OE"]],
+    ["VCCB", ["dut.VCCB"]],
+  ])
+})
+
+test("retains a leaf supply node when a logic-state overlay references it", () => {
+  const contract = compileApplicationFixtureContract({
+    plan: parseTypicalApplicationPlan(
+      {
+        version: 4,
+        availability: "documented",
+        pcb_implementation: "schematic_only",
+        title: "Logic enable",
+        description: "OE is tied high to a supply leaf.",
+        source_references: [{ page: 1 }],
+        components: [{ reference: "U1", kind: "integrated_circuit", value: "OVERLAY" }],
+        connections: [
+          { net: "VCC", pins: ["U1.VCC", "VCC"] },
+          { net: "OE", pins: ["U1.OE", "OE"] },
+          { net: "GND", pins: ["U1.GND", "GND"] },
+        ],
+      },
+      { part_number: "OVERLAY" },
+    ),
+    model_interface: {
+      version: 1,
+      part_number: "OVERLAY",
+      entry_name: "OVERLAY",
+      pins: [
+        ["1", "VCC", "power_input"],
+        ["2", "OE", "input"],
+        ["3", "GND", "ground"],
+      ].map(([physical_pin, label, role], index) => ({
+        physical_pin: physical_pin!,
+        component_pin: `pin${physical_pin}`,
+        source_port_id: `source_port_${index}`,
+        spice_node: label!,
+        labels: [label!],
+        role: role!,
+      })),
+    },
+    source_plan_sha256: PLAN_SHA256,
+    source_pdf_sha256: PDF_SHA256,
+  })
+  const resolved = resolveApplicationFixtureForBinding({
+    contract,
+    binding: {
+      response: { type: "voltage", positive: "dut.OE", negative: "gnd", nominal_volts: 1.8 },
+      stimulus: {
+        type: "voltage_step",
+        positive: "dut.OE",
+        negative: "gnd",
+        pulse: { low: 0, high: 1.8, delay: 1e-9, rise: 1e-9, fall: 1e-9, width: 1e-6, period: 2e-6 },
+      },
+      auxiliary_fixtures: [{ type: "logic_state", endpoint: "dut.OE", reference: "dut.VCC", state: "high" }],
+    },
+  })
+
+  expect(resolved.node_groups.find(({ source_net }) => source_net === "VCC")?.dut_endpoints).toEqual([
+    "dut.VCC",
   ])
 })
 

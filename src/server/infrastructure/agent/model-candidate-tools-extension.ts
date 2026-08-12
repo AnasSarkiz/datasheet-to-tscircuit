@@ -26,6 +26,7 @@ import {
 import {
   type ModelFitParameterRange,
   type ModelParameterSearchResult,
+  modelFitSeriesKey,
   replaceModelFitParameters,
   scoreModelFitValidation,
   searchModelParameters,
@@ -388,6 +389,13 @@ async function runProductionParameterFit(input: {
   )
   const artifact_directory = await mkdtemp(resolve(input.workspace, ".candidate-fit-"))
   const original_source = checked.generated.source
+  const response_series = new Set(
+    plan.cases.flatMap((validation_case) =>
+      validation_case.observations
+        .filter(({ role }) => role !== "stimulus")
+        .map(({ id }) => modelFitSeriesKey(validation_case.id, id)),
+    ),
+  )
   try {
     const result = await searchModelParameters({
       source: original_source,
@@ -406,7 +414,7 @@ async function runProductionParameterFit(input: {
           ngspice: executeLocalNgspice,
           ngspice_path: input.ngspice_path,
         })
-        return scoreModelFitValidation(validation)
+        return scoreModelFitValidation(validation, { included_series: response_series })
       },
     })
     const best_source = replaceModelFitParameters(original_source, result.best.values)

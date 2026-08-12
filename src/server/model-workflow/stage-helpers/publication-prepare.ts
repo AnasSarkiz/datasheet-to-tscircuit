@@ -100,6 +100,10 @@ export async function prepareModelPublication(input: {
           readFile(join(input.model_dir, "component-evidence.json")),
           readFile(join(input.model_dir, "application-fixture-contract.json")),
         ])
+        const source_catalog_path = join(input.model_dir, "component-footprint-catalog.json")
+        const source_catalog_bytes = (await Bun.file(source_catalog_path).exists())
+          ? await readFile(source_catalog_path)
+          : undefined
         let standalone_contract: unknown
         try {
           standalone_contract = JSON.parse(
@@ -114,6 +118,7 @@ export async function prepareModelPublication(input: {
           source_plan_bytes,
           source_pdf_bytes: canonical_datasheet_bytes,
           source_evidence_bytes,
+          source_catalog_bytes,
           model_interface: completion_integrity.contract.interface,
           standalone_contract,
           embedded_contract: completion_integrity.contract.application_fixture,
@@ -121,6 +126,7 @@ export async function prepareModelPublication(input: {
         return {
           source_plan_bytes,
           source_evidence_bytes,
+          source_catalog_bytes,
           standalone_bytes,
         }
       })()
@@ -258,6 +264,14 @@ export async function prepareModelPublication(input: {
               join(accepted_bundle, "component-evidence.json"),
               application_source_artifacts.source_evidence_bytes,
             ),
+            ...(application_source_artifacts.source_catalog_bytes
+              ? [
+                  Bun.write(
+                    join(accepted_bundle, "component-footprint-catalog.json"),
+                    application_source_artifacts.source_catalog_bytes,
+                  ),
+                ]
+              : []),
             Bun.write(
               join(accepted_bundle, "application-fixture-contract.json"),
               application_source_artifacts.standalone_bytes,

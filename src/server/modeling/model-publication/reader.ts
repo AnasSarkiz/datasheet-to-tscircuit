@@ -238,6 +238,14 @@ export async function validateResolvedModelPublication(
         max_bytes: 4 * 1024 * 1024,
       }),
     ])
+    const source_catalog_bytes = resolved.accepted_bundle_manifest.files["component-footprint-catalog.json"]
+      ? await readVerifiedPublicationArtifact({
+          publication: resolved,
+          bundle: "accepted_model",
+          relative_path: "component-footprint-catalog.json",
+          max_bytes: 16 * 1024 * 1024,
+        })
+      : undefined
     let standalone_contract: unknown
     try {
       standalone_contract = JSON.parse(
@@ -252,6 +260,7 @@ export async function validateResolvedModelPublication(
       source_plan_bytes,
       source_pdf_bytes,
       source_evidence_bytes,
+      source_catalog_bytes,
       model_interface: contract.interface,
       standalone_contract,
       embedded_contract: contract.application_fixture,

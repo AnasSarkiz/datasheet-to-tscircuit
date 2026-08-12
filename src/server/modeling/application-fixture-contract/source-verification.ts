@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { parseComponentEvidence } from "../../component-evidence"
+import { parseComponentEvidence, parseComponentFootprintCatalog } from "../../component-evidence"
 import {
   applicationTargetIdentityFromEvidence,
   parseTypicalApplicationPlan,
@@ -30,6 +30,7 @@ export function recompileApplicationFixtureContractFromSources(input: {
   source_plan_bytes: Uint8Array
   source_pdf_bytes: Uint8Array
   source_evidence_bytes: Uint8Array
+  source_catalog_bytes?: Uint8Array
   model_interface: ModelInterface
   standalone_contract: unknown
   embedded_contract: unknown
@@ -41,9 +42,15 @@ export function recompileApplicationFixtureContractFromSources(input: {
     parseUtf8Json(input.source_plan_bytes, "typical-application-plan.json"),
     applicationTargetIdentityFromEvidence(evidence),
   )
+  const documented_pinout_variants = input.source_catalog_bytes
+    ? parseComponentFootprintCatalog(
+        parseUtf8Json(input.source_catalog_bytes, "component-footprint-catalog.json"),
+      ).footprints.map(({ component_evidence }) => component_evidence)
+    : [evidence]
   const recompiled = compileApplicationFixtureContract({
     plan,
     model_interface: input.model_interface,
+    documented_pinout_variants,
     source_plan_sha256: sha256(input.source_plan_bytes),
     source_pdf_sha256: sha256(input.source_pdf_bytes),
   })

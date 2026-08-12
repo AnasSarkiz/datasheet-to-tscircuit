@@ -1,4 +1,5 @@
 import type { TypicalApplicationPlan } from "../../component-workflow/application-plan"
+import type { ComponentEvidence } from "../../component-evidence"
 import { normalizeElectricalPinLabel } from "../../pin-label-normalization"
 import type { ModelInterface, ModelInterfacePin, ModelPublicElectricalEndpoint } from "../types"
 import { parseApplicationEngineeringValue } from "./engineering-value"
@@ -77,8 +78,70 @@ function fixtureId(reference: string): string {
   return `app_${suffix}`
 }
 
-function interfacePinForLabel(label: string, model_interface: ModelInterface): ModelInterfacePin {
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort())
+}
+
+function applicationPinoutVariants(input: {
+  plan: TypicalApplicationPlan
+  documented_pinout_variants: readonly ComponentEvidence[]
+}): readonly ComponentEvidence[] {
+  const application_pins = input.plan.connections
+    .flatMap(({ pins }) => pins)
+    .flatMap((endpoint) => {
+      const parsed = endpointParts(endpoint)
+      return parsed && componentKey(parsed.reference) === "u1"
+        ? [normalizeElectricalPinLabel(parsed.terminal)]
+        : []
+    })
+  if (application_pins.length === 0 || new Set(application_pins).size !== application_pins.length) {
+    return []
+  }
+  return input.documented_pinout_variants.filter((evidence) => {
+    const connectable_pins = evidence.pinout.pins
+      .filter(({ role }) => role !== "no_connect")
+      .map(({ number }) => normalizeElectricalPinLabel(number))
+    return sameStrings(application_pins, connectable_pins)
+  })
+}
+
+function interfacePinForLabel(
+  label: string,
+  model_interface: ModelInterface,
+  source_pinouts: readonly ComponentEvidence[],
+): ModelInterfacePin {
   const normalized = normalizeElectricalPinLabel(label)
+  const translated_matches = source_pinouts.map((evidence) => {
+    const source_pin = evidence.pinout.pins.find(
+      ({ number }) => normalizeElectricalPinLabel(number) === normalized,
+    )
+    if (!source_pin) {
+      throw new ApplicationFixtureContractError(
+        `typical application endpoint U1.${label} is absent from a matching documented package pinout`,
+      )
+    }
+    const source_labels = source_pin.labels.map(normalizeElectricalPinLabel)
+    const target_matches = model_interface.pins.filter((pin) =>
+      [pin.component_pin, pin.spice_node, ...pin.labels].some((candidate) =>
+        source_labels.includes(normalizeElectricalPinLabel(candidate)),
+      ),
+    )
+    if (target_matches.length !== 1) {
+      throw new ApplicationFixtureContractError(
+        `typical application endpoint U1.${label} has documented identity ${source_pin.labels.join(
+          "/",
+        )}, which resolves to ${target_matches.length} public model-interface pins; expected exactly one`,
+      )
+    }
+    return target_matches[0]!
+  })
+  if (translated_matches.length > 0) {
+    const translated_nodes = new Set(translated_matches.map(({ spice_node }) => spice_node))
+    if (translated_nodes.size === 1) return translated_matches[0]!
+    throw new ApplicationFixtureContractError(
+      `typical application endpoint U1.${label} has inconsistent functional identities across documented package pinouts`,
+    )
+  }
   const matches = model_interface.pins.filter((pin) =>
     [pin.physical_pin, pin.component_pin, pin.spice_node, ...pin.labels].some(
       (candidate) => normalizeElectricalPinLabel(candidate) === normalized,
@@ -90,13 +153,6 @@ function interfacePinForLabel(label: string, model_interface: ModelInterface): M
     )
   }
   return matches[0]!
-}
-
-function interfaceEndpointForLabel(
-  label: string,
-  model_interface: ModelInterface,
-): ModelPublicElectricalEndpoint {
-  return `dut.${interfacePinForLabel(label, model_interface).spice_node}`
 }
 
 function isGroundIdentity(value: string): boolean {
@@ -232,6 +288,7 @@ function compileNonExecutableComponent(input: {
 export function compileApplicationFixtureContract(input: {
   plan: TypicalApplicationPlan
   model_interface: ModelInterface
+  documented_pinout_variants?: readonly ComponentEvidence[]
   source_plan_sha256: string
   source_pdf_sha256: string
 }): ApplicationFixtureContract {
@@ -254,13 +311,18 @@ export function compileApplicationFixtureContract(input: {
     return { ...payload, contract_sha256: hashApplicationFixtureContract(payload) }
   }
 
+  const source_pinouts = applicationPinoutVariants({
+    plan: input.plan,
+    documented_pinout_variants: input.documented_pinout_variants ?? [],
+  })
+
   const unclassified_groups: UnclassifiedNodeGroup[] = input.plan.connections.map((connection, index) => {
     const source_endpoints = [...connection.pins]
     const external_terminals = source_endpoints.filter((endpoint) => !endpointParts(endpoint))
     const dut_pins = source_endpoints.flatMap((source_endpoint) => {
       const parsed = endpointParts(source_endpoint)
       if (!parsed || componentKey(parsed.reference) !== "u1") return []
-      return [interfacePinForLabel(parsed.terminal, input.model_interface)]
+      return [interfacePinForLabel(parsed.terminal, input.model_interface, source_pinouts)]
     })
     const dut_endpoints = dut_pins.map(
       ({ spice_node }) => `dut.${spice_node}` as ModelPublicElectricalEndpoint,

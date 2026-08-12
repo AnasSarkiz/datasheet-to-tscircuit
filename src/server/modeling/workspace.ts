@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { parseComponentEvidence } from "../component-evidence"
+import { parseComponentEvidence, parseComponentFootprintCatalog } from "../component-evidence"
 import {
   applicationEvidenceFilePath,
   readCommittedApplicationEvidenceSnapshot,
@@ -93,6 +93,7 @@ export async function prepareModelEvidenceInputs(input: {
     )
   }
   const evidence_bytes = evidence_snapshot.files.get("component-evidence.json")
+  const footprint_catalog_bytes = evidence_snapshot.files.get("component-footprint-catalog.json")
   const application_plan_bytes = application_evidence_snapshot.files.get(
     applicationEvidenceFilePath("typical-application-plan.json"),
   )
@@ -106,6 +107,22 @@ export async function prepareModelEvidenceInputs(input: {
     throw new Error("Committed component-evidence.json is not valid UTF-8 JSON", { cause: error })
   }
   const evidence = parseComponentEvidence(evidence_value)
+  let documented_pinout_variants = [evidence]
+  if (footprint_catalog_bytes) {
+    let catalog_value: unknown
+    try {
+      catalog_value = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(footprint_catalog_bytes),
+      ) as unknown
+    } catch (error) {
+      throw new Error("Committed component-footprint-catalog.json is not valid UTF-8 JSON", {
+        cause: error,
+      })
+    }
+    documented_pinout_variants = parseComponentFootprintCatalog(catalog_value).footprints.map(
+      ({ component_evidence }) => component_evidence,
+    )
+  }
   const datasheet_bytes = evidence_snapshot.source_pdf
   const discovery_datasheet_bytes = await readFile(join(input.model_dir, "datasheet.pdf"))
   if (
@@ -134,6 +151,7 @@ export async function prepareModelEvidenceInputs(input: {
   const application_fixture = compileApplicationFixtureContract({
     plan: application_plan,
     model_interface,
+    documented_pinout_variants,
     source_plan_sha256: sha256Bytes(application_plan_bytes),
     source_pdf_sha256: sha256Bytes(datasheet_bytes),
   })
@@ -144,6 +162,9 @@ export async function prepareModelEvidenceInputs(input: {
   await mkdir(input.model_dir, { recursive: true })
   await Promise.all([
     Bun.write(join(input.model_dir, "component-evidence.json"), evidence_bytes),
+    ...(footprint_catalog_bytes
+      ? [Bun.write(join(input.model_dir, "component-footprint-catalog.json"), footprint_catalog_bytes)]
+      : []),
     Bun.write(join(input.model_dir, "typical-application-plan.json"), application_plan_bytes),
     Bun.write(workspace_application_fixture_path, application_fixture_text),
     Bun.write(interface_path, `${JSON.stringify(model_interface, null, 2)}\n`),

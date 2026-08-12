@@ -119,8 +119,21 @@ export function replaceModelFitParameters(source: string, values: Readonly<Recor
     .join("\n")
 }
 
-export function scoreModelFitValidation(result: ValidationRunResult): ModelFitScore {
-  const series = result.cases.flatMap((validation_case) => validation_case.series)
+export function modelFitSeriesKey(case_id: string, observation_id: string): string {
+  return `${case_id}\u0000${observation_id}`
+}
+
+export function scoreModelFitValidation(
+  result: ValidationRunResult,
+  options?: { included_series?: ReadonlySet<string> },
+): ModelFitScore {
+  const series = result.cases.flatMap((validation_case) =>
+    validation_case.series.filter(
+      ({ observation_id }) =>
+        !options?.included_series ||
+        options.included_series.has(modelFitSeriesKey(validation_case.case_id, observation_id)),
+    ),
+  )
   const normalized_max_errors = series
     .map(({ metrics }) => metrics.normalized_max_error)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value))

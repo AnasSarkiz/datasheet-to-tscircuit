@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   compareModelFitScores,
+  modelFitSeriesKey,
   readModelFitParameterDeclarations,
   replaceModelFitParameters,
   scoreModelFitValidation,
@@ -128,6 +129,55 @@ test("fit scoring rejects simulator failures before comparing numeric residuals"
   expect(stable.runnable).toBe(true)
   expect(broken.runnable).toBe(false)
   expect(compareModelFitScores(stable, broken)).toBeLessThan(0)
+})
+
+test("fit scoring can exclude server-owned stimulus series from the parameter objective", () => {
+  const series = (observation_id: string, normalized_error: number) => ({
+    observation_id,
+    type: "voltage" as const,
+    unit: "V" as const,
+    scale: "linear" as const,
+    points: [],
+    metrics: {
+      sample_count: 1,
+      normalized_max_error: normalized_error,
+      normalized_rmse: normalized_error / 2,
+    },
+    passed: normalized_error <= 0.1,
+    errors: [],
+  })
+  const result: ValidationRunResult = {
+    version: 1,
+    passed: false,
+    hashes: {
+      plan_sha256: "a".repeat(64),
+      model_sha256: "b".repeat(64),
+      manifest_sha256: "c".repeat(64),
+    },
+    cases: [
+      {
+        case_id: "transient",
+        status: "failed",
+        analysis: "transient",
+        series: [series("vout", 0.2), series("vin_stimulus", 1.5)],
+        errors: [],
+        elapsed_ms: 1,
+        netlist_sha256: "d".repeat(64),
+      },
+    ],
+    errors: [],
+  }
+
+  expect(
+    scoreModelFitValidation(result, {
+      included_series: new Set([modelFitSeriesKey("transient", "vout")]),
+    }),
+  ).toEqual({
+    runnable: true,
+    failed_series_count: 1,
+    worst_normalized_max_error: 0.2,
+    mean_normalized_rmse: 0.1,
+  })
 })
 
 test("fit scoring prefers more passing public series before smaller residuals", () => {
