@@ -46,26 +46,15 @@ function fixtureGroupIds(fixture: ApplicationFixtureContract["fixtures"][number]
 function executableApplicationProjection(input: {
   groups: ResolvedApplicationNodeGroup[]
   contract: ApplicationFixtureContract
-  condition_overlays: readonly ApplicationConditionOverlay[]
 }): {
   groups: ResolvedApplicationNodeGroup[]
   fixtures: ApplicationFixtureContract["fixtures"]
 } {
   const passive_group_ids = new Set(input.contract.fixtures.flatMap(fixtureGroupIds))
-  const overlay_reference_group_ids = new Set(
-    input.condition_overlays.flatMap((overlay) =>
-      overlay.type === "logic_state" && overlay.reference !== "gnd"
-        ? input.groups
-            .filter(({ dut_endpoints }) => dut_endpoints.includes(overlay.reference))
-            .map(({ id }) => id)
-        : [],
-    ),
-  )
   const retained_group_ids = new Set(
     input.groups.flatMap((group) =>
       group.is_ground ||
       group.dut_endpoints.length >= 2 ||
-      overlay_reference_group_ids.has(group.id) ||
       (group.dut_endpoints.length >= 1 && passive_group_ids.has(group.id))
         ? [group.id]
         : [],
@@ -194,7 +183,7 @@ export function resolveApplicationFixtureForBinding(input: {
       )
     }
   }
-  const executable = executableApplicationProjection({ groups, contract, condition_overlays })
+  const executable = executableApplicationProjection({ groups, contract })
   const payload: ResolvedApplicationFixturePayload = {
     version: 1,
     contract_sha256: contract.contract_sha256,

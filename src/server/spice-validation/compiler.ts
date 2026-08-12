@@ -70,11 +70,20 @@ function getNodeResolver(
       )
     }
     if (overlay.type === "pulsed_source") continue
+    const directly_anchored_reference =
+      overlay.type === "logic_state" &&
+      overlay.reference !== "gnd" &&
+      validation_case.fixtures.some((fixture) => {
+        const endpoints =
+          fixture.type === "diode" ? [fixture.anode, fixture.cathode] : [fixture.positive, fixture.negative]
+        return endpoints.includes(overlay.reference)
+      })
     const reference_node =
       overlay.reference === "gnd"
         ? "0"
         : overlay.reference.startsWith("dut.")
-          ? grouped_dut_nodes.get(overlay.reference.slice("dut.".length))
+          ? (grouped_dut_nodes.get(overlay.reference.slice("dut.".length)) ??
+            (directly_anchored_reference ? dut_nodes.get(overlay.reference.slice("dut.".length)) : undefined))
           : undefined
     if (!reference_node) {
       throw new ValidationCompileError(

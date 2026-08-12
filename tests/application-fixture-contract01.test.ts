@@ -269,7 +269,7 @@ test("package-neutral applications translate a documented source pinout to the s
   ])
 })
 
-test("retains a leaf supply node when a logic-state overlay references it", () => {
+test("a logic-state overlay may reference a pruned supply leaf only when a fixture anchors it", () => {
   const contract = compileApplicationFixtureContract({
     plan: parseTypicalApplicationPlan(
       {
@@ -322,9 +322,52 @@ test("retains a leaf supply node when a logic-state overlay references it", () =
     },
   })
 
-  expect(resolved.node_groups.find(({ source_net }) => source_net === "VCC")?.dut_endpoints).toEqual([
-    "dut.VCC",
-  ])
+  expect(resolved.node_groups.find(({ source_net }) => source_net === "VCC")).toBeUndefined()
+  const validation_case = {
+    id: "logic-enable",
+    requirement_ids: [],
+    nets: [],
+    fixtures: [
+      {
+        type: "voltage_source" as const,
+        id: "supply",
+        positive: "dut.VCC" as const,
+        negative: "gnd" as const,
+        dc_volts: 1.8,
+      },
+    ],
+    analysis: { type: "transient" as const, step: 1e-9, stop: 2e-6 },
+    observations: [
+      {
+        id: "oe_voltage",
+        requirement_id: "oe_voltage",
+        type: "voltage" as const,
+        positive: "dut.OE" as const,
+        negative: "gnd" as const,
+        unit: "V" as const,
+        scale: "linear" as const,
+        reference: { type: "target" as const, target: 1.8, tolerance: 0.1 },
+      },
+    ],
+    application_fixture: resolved,
+  }
+  const manifest: ModelManifest = {
+    version: 1,
+    part_number: "OVERLAY",
+    dialect: "portable",
+    entry_name: "OVERLAY",
+    model_file: "model.lib",
+    simulator: "ngspice",
+    generated_at: "2026-08-12T00:00:00.000Z",
+    pins: [
+      { component_pin: "pin1", spice_node: "VCC" },
+      { component_pin: "pin2", spice_node: "OE" },
+      { component_pin: "pin3", spice_node: "GND" },
+    ],
+    revision: "a".repeat(16),
+  }
+  expect(() => compileValidationCase(validation_case, manifest)).not.toThrow()
+  expect(() => compileValidationCase({ ...validation_case, fixtures: [] }, manifest)).toThrow("not anchored")
 })
 
 testWithProductionTscircuit(
