@@ -81,7 +81,7 @@ test("a complete finite comparison failure remains a usable authoritative-valida
   ).resolves.toBeUndefined()
 })
 
-test("finite ngspice output may advance for inspectable viewer diagnosis", async () => {
+test("a candidate cannot advance without a complete viewer run", async () => {
   const directory = await workspace()
   const missing_viewer = await createModelTrainingCheckReceipt({
     workspace: directory,
@@ -94,7 +94,7 @@ test("finite ngspice output may advance for inspectable viewer diagnosis", async
       receipt: missing_viewer,
       checked,
     }),
-  ).resolves.toBeUndefined()
+  ).rejects.toThrow("did not return every tscircuit viewer series")
 
   const unavailable = await createModelTrainingCheckReceipt({
     workspace: directory,
@@ -107,7 +107,7 @@ test("finite ngspice output may advance for inspectable viewer diagnosis", async
       receipt: unavailable,
       checked,
     }),
-  ).resolves.toBeUndefined()
+  ).rejects.toThrow("viewer_validation_unavailable")
 
   const simulator_failure = await createModelTrainingCheckReceipt({
     workspace: directory,

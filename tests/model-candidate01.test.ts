@@ -340,75 +340,35 @@ test("fresh candidates ignore stale model output and preserve accepted revisions
   expect(await readFile(join(model_dir, "model-card.md"), "utf8")).toBe("Accepted model.\n")
 })
 
-test("legacy model-only repair candidates receive the failed model and only public training inputs", async () => {
+test("public-training candidate generation rejects legacy repair modes before agent access", async () => {
   const model_dir = await prepareModelDirectory()
-  const previous_source = ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 1\n.ENDS GAIN\n"
-  const previous_dir = join(model_dir, "candidates", "previous")
-  await mkdir(previous_dir, { recursive: true })
-  await Promise.all([
-    Bun.write(join(model_dir, "model.lib"), ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 9\n.ENDS GAIN\n"),
-    Bun.write(join(model_dir, "model-card.md"), "Accepted model.\n"),
-    Bun.write(join(previous_dir, "model.lib"), previous_source),
-    Bun.write(join(previous_dir, "model-card.md"), "Previous candidate.\n"),
-    Bun.write(join(model_dir, "validation-results.json"), '{"passed":false}\n'),
-  ])
-  let received_previous_artifacts = false
-  let validation_artifacts_were_hidden = false
-  let training_plan_x_values: number[] = []
-  let repair_curve_x_values: number[] = []
-  const agent_client: AgentClient = {
-    async run(input) {
-      received_previous_artifacts =
-        (await Bun.file(join(input.workspace, "model.lib")).text()) === previous_source &&
-        (await Bun.file(join(input.workspace, "model-card.md")).exists())
-      validation_artifacts_were_hidden =
-        !(await Bun.file(join(input.workspace, "validation-plan.json")).exists()) &&
-        !(await Bun.file(join(input.workspace, "validation-results.json")).exists())
-      training_plan_x_values = JSON.parse(
-        await Bun.file(join(input.workspace, "model-training-plan.json")).text(),
-      ).cases[0].observations[0].reference.points.map(({ x }: { x: number }) => x)
-      repair_curve_x_values = JSON.parse(
-        await Bun.file(join(input.workspace, "model-contract.json")).text(),
-      ).characterization.requirements[0].reference_curve.points.map(({ x }: { x: number }) => x)
-      const source = ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 3\n.ENDS GAIN\n"
-      const card = "Repaired model.\n"
-      await Promise.all([
-        Bun.write(join(input.workspace, "model.lib"), source),
-        Bun.write(join(input.workspace, "model-card.md"), card),
-      ])
-      await simulateCandidateToolReceipts({ workspace: input.workspace, source, card })
-      return { attempts: 1, duration_ms: 1, output_tail: "" }
-    },
-  }
-
-  await generateModelCandidate({
+  let agent_was_called = false
+  const error = await generateModelCandidate({
     model_dir,
     contract,
     validation_plan,
     evidence_dir: join(model_dir, "evidence"),
-    previous_candidate: {
-      model_path: join(previous_dir, "model.lib"),
-      model_card_path: join(previous_dir, "model-card.md"),
-    },
     strategy_guidance: "Use a dependent source.",
-    feedback: "The gain was too low.",
-    stage_id: "repair_model",
-    phase_label: "test repair",
+    stage_id: "repair_model" as never,
+    phase_label: "legacy repair",
     signal: new AbortController().signal,
     use_openai: false,
-    agent_client,
-    ngspice: accepting_ngspice,
+    agent_client: {
+      async run() {
+        agent_was_called = true
+        throw new Error("legacy repair must not reach the agent")
+      },
+    },
     ngspice_path: "ngspice-test",
     tsci_path: "tsci-test",
     max_artifact_attempts: 1,
-    debug_dir: join(model_dir, "debug"),
+    debug_dir: join(model_dir, "debug-repair-boundary"),
     on_output: () => undefined,
-  })
+  }).catch((caught) => caught)
 
-  expect(received_previous_artifacts).toBe(true)
-  expect(validation_artifacts_were_hidden).toBe(true)
-  expect(training_plan_x_values).toEqual([0, 1, 3, 5, 6])
-  expect(repair_curve_x_values).toEqual([0, 1, 3, 5, 6])
+  expect(error).toBeInstanceOf(Error)
+  expect((error as Error).message).toContain("restricted to initial generation")
+  expect(agent_was_called).toBe(false)
 })
 
 test("model candidate validation bounds agent-owned source before parsing it", async () => {

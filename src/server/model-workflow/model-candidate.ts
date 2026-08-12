@@ -31,10 +31,8 @@ export async function generateModelCandidate(input: {
   contract: ModelContract
   validation_plan: ValidationPlan
   evidence_dir: string
-  previous_candidate?: { model_path: string; model_card_path: string }
   strategy_guidance: string
-  feedback?: string
-  stage_id: "infer_spice_model" | "repair_spice_model" | "generate_model" | "repair_model"
+  stage_id: "infer_spice_model" | "generate_model"
   phase_label: string
   signal: AbortSignal
   use_openai: boolean
@@ -47,18 +45,9 @@ export async function generateModelCandidate(input: {
   debug_dir: string
   on_output: (stream: "system" | "stdout" | "stderr", message: string) => void | Promise<void>
 }): Promise<AgentArtifactAttempt<StoredGeneratedModel>> {
-  const is_repair = input.stage_id === "repair_spice_model" || input.stage_id === "repair_model"
-  if (is_repair && !input.previous_candidate) {
-    throw new Error("Model repair requires the exact prior immutable candidate")
+  if (input.stage_id !== "infer_spice_model" && input.stage_id !== "generate_model") {
+    throw new Error("Public-training model candidates are restricted to initial generation")
   }
-  const previous_candidate = input.previous_candidate
-  const repair_inputs =
-    is_repair && previous_candidate
-      ? [
-          { source: previous_candidate.model_path, destination: "model.lib" },
-          { source: previous_candidate.model_card_path, destination: "model-card.md" },
-        ]
-      : []
   const training_contract = createModelTrainingContract(input.contract)
   const training_plan = createModelTrainingValidationPlan({
     plan: input.validation_plan,
@@ -87,7 +76,6 @@ export async function generateModelCandidate(input: {
           { source: join(input.model_dir, "tsconfig.json"), required: false },
           { source: join(input.model_dir, "tscircuit.config.json"), required: false },
           { source: join(input.model_dir, "tscircuit.config.ts"), required: false },
-          ...repair_inputs,
         ],
         directories: [{ source: input.evidence_dir, destination: "evidence", required: false }],
       })
@@ -110,7 +98,7 @@ export async function generateModelCandidate(input: {
       buildModelGenerationPrompt({
         contract: training_contract,
         strategy_guidance: input.strategy_guidance,
-        feedback: [input.feedback, artifact_feedback].filter(Boolean).join("\n\n"),
+        feedback: artifact_feedback,
       }),
     heartbeat_paths: (workspace) => [join(workspace, "model.lib"), join(workspace, "model-card.md")],
     on_output: input.on_output,
