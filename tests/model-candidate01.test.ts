@@ -7,6 +7,10 @@ import type { AgentClient } from "@/server/infrastructure/agent"
 import { generateModelCandidate } from "@/server/model-workflow/model-candidate"
 import { MODEL_CANDIDATE_CHECK_RECEIPT_FILE } from "@/server/model-workflow/model-candidate-check"
 import { assertNgspiceAcceptsModelCandidate } from "@/server/model-workflow/model-candidate-smoke"
+import {
+  createModelTrainingCheckReceipt,
+  MODEL_TRAINING_CHECK_RECEIPT_FILE,
+} from "@/server/model-workflow/model-training-check"
 import { createModelManifest, type ModelContract } from "@/server/modeling"
 import { PipelineError } from "@/server/pipeline"
 import { executeLocalNgspice, type NgspiceExecutor, type ValidationPlan } from "@/server/spice-validation"
@@ -59,6 +63,56 @@ async function simulateCandidateToolReceipts(input: {
   await Bun.write(
     join(input.workspace, MODEL_CANDIDATE_CHECK_RECEIPT_FILE),
     `${JSON.stringify(candidate_receipt)}\n`,
+  )
+  const training_plan = JSON.parse(
+    await Bun.file(join(input.workspace, "model-training-plan.json")).text(),
+  ) as {
+    cases: Array<{
+      id: string
+      observations: Array<{
+        id: string
+        reference: { type: "curve"; points: Array<{ x: number; y: number }> }
+      }>
+    }>
+  }
+  const training_validation = {
+    version: 1 as const,
+    status: "passed" as const,
+    cases: training_plan.cases.map((validation_case) => {
+      const series = validation_case.observations.map((observation) => ({
+        observation_id: observation.id,
+        status: "passed" as const,
+        metrics: {
+          sample_count: observation.reference.points.length,
+          normalized_max_error: 0,
+          normalized_rmse: 0,
+        },
+        samples: observation.reference.points.map(({ x, y }) => ({
+          x,
+          reference_y: y,
+          simulated_y: y,
+          error: 0,
+        })),
+        error_codes: [],
+      }))
+      return {
+        case_id: validation_case.id,
+        status: "passed" as const,
+        server_series: series,
+        viewer_series: series,
+        error_codes: [],
+      }
+    }),
+    error_codes: [],
+  }
+  const training_receipt = await createModelTrainingCheckReceipt({
+    workspace: input.workspace,
+    candidate: candidate_receipt,
+    training_validation,
+  })
+  await Bun.write(
+    join(input.workspace, MODEL_TRAINING_CHECK_RECEIPT_FILE),
+    `${JSON.stringify(training_receipt)}\n`,
   )
 }
 
@@ -125,7 +179,39 @@ const validation_plan: ValidationPlan = {
     entry_name: contract.interface.entry_name,
     pins: contract.interface.pins.map(({ spice_node }) => spice_node),
   },
-  cases: [],
+  cases: [
+    {
+      id: "visible_case",
+      requirement_ids: ["transfer_curve"],
+      nets: [],
+      fixtures: [
+        {
+          id: "input",
+          type: "voltage_source",
+          positive: "dut.IN",
+          negative: "gnd",
+          dc_volts: 0,
+        },
+      ],
+      analysis: { type: "dc_sweep", source_id: "input", start: 0, stop: 6, step: 1 },
+      observations: [
+        {
+          id: "output",
+          requirement_id: "transfer_curve",
+          type: "voltage",
+          positive: "dut.OUT",
+          negative: "gnd",
+          unit: "V",
+          scale: "linear",
+          reference: {
+            type: "curve",
+            tolerance: 0.05,
+            points: Array.from({ length: 7 }, (_, value) => ({ x: value, y: value })),
+          },
+        },
+      ],
+    },
+  ],
 }
 
 const typical_application_plan = {
@@ -173,6 +259,10 @@ test("fresh candidates ignore stale model output and preserve accepted revisions
   const stale_model_was_visible: boolean[] = []
   const application_plan_was_hidden: boolean[] = []
   const candidate_curve_x_values: number[][] = []
+  const training_plan_curve_x_values: number[][] = []
+  const candidate_check_configs: Array<
+    { readonly ngspice_path: string; readonly tsci_path?: string } | undefined
+  > = []
   const agent_client: AgentClient = {
     async run(input) {
       stale_model_was_visible.push(await Bun.file(join(input.workspace, "model.lib")).exists())
@@ -184,6 +274,12 @@ test("fresh candidates ignore stale model output and preserve accepted revisions
           await Bun.file(join(input.workspace, "model-contract.json")).text(),
         ).characterization.requirements[0].reference_curve.points.map(({ x }: { x: number }) => x),
       )
+      training_plan_curve_x_values.push(
+        JSON.parse(
+          await Bun.file(join(input.workspace, "model-training-plan.json")).text(),
+        ).cases[0].observations[0].reference.points.map(({ x }: { x: number }) => x),
+      )
+      candidate_check_configs.push(input.model_candidate_check)
       const source = sources.shift()
       if (!source) throw new Error("No test model remains")
       const card = "Deterministic test model.\n"
@@ -224,6 +320,14 @@ test("fresh candidates ignore stale model output and preserve accepted revisions
     [0, 1, 3, 5, 6],
     [0, 1, 3, 5, 6],
   ])
+  expect(training_plan_curve_x_values).toEqual([
+    [0, 1, 3, 5, 6],
+    [0, 1, 3, 5, 6],
+  ])
+  expect(candidate_check_configs).toEqual([
+    { ngspice_path: "ngspice-test", tsci_path: "tsci-test" },
+    { ngspice_path: "ngspice-test", tsci_path: "tsci-test" },
+  ])
   expect(
     JSON.parse(
       await readFile(join(model_dir, "model-contract.json"), "utf8"),
@@ -236,7 +340,7 @@ test("fresh candidates ignore stale model output and preserve accepted revisions
   expect(await readFile(join(model_dir, "model-card.md"), "utf8")).toBe("Accepted model.\n")
 })
 
-test("legacy model-only repair candidates receive the failed model but no simulation inputs", async () => {
+test("legacy model-only repair candidates receive the failed model and only public training inputs", async () => {
   const model_dir = await prepareModelDirectory()
   const previous_source = ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 1\n.ENDS GAIN\n"
   const previous_dir = join(model_dir, "candidates", "previous")
@@ -250,7 +354,7 @@ test("legacy model-only repair candidates receive the failed model but no simula
   ])
   let received_previous_artifacts = false
   let validation_artifacts_were_hidden = false
-  let training_plan_was_hidden = false
+  let training_plan_x_values: number[] = []
   let repair_curve_x_values: number[] = []
   const agent_client: AgentClient = {
     async run(input) {
@@ -260,7 +364,9 @@ test("legacy model-only repair candidates receive the failed model but no simula
       validation_artifacts_were_hidden =
         !(await Bun.file(join(input.workspace, "validation-plan.json")).exists()) &&
         !(await Bun.file(join(input.workspace, "validation-results.json")).exists())
-      training_plan_was_hidden = !(await Bun.file(join(input.workspace, "model-training-plan.json")).exists())
+      training_plan_x_values = JSON.parse(
+        await Bun.file(join(input.workspace, "model-training-plan.json")).text(),
+      ).cases[0].observations[0].reference.points.map(({ x }: { x: number }) => x)
       repair_curve_x_values = JSON.parse(
         await Bun.file(join(input.workspace, "model-contract.json")).text(),
       ).characterization.requirements[0].reference_curve.points.map(({ x }: { x: number }) => x)
@@ -301,7 +407,7 @@ test("legacy model-only repair candidates receive the failed model but no simula
 
   expect(received_previous_artifacts).toBe(true)
   expect(validation_artifacts_were_hidden).toBe(true)
-  expect(training_plan_was_hidden).toBe(true)
+  expect(training_plan_x_values).toEqual([0, 1, 3, 5, 6])
   expect(repair_curve_x_values).toEqual([0, 1, 3, 5, 6])
 })
 
@@ -378,7 +484,7 @@ test("candidate acceptance requires a passed self-check receipt for the final fi
   expect(await Bun.file(join(model_dir, "candidates")).exists()).toBe(false)
 })
 
-test("candidate inference requires only its static receipt and does not consume simulation results", async () => {
+test("candidate inference requires a complete public-training receipt", async () => {
   const model_dir = await prepareModelDirectory()
   const source = ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 1\n.ENDS GAIN\n"
   const card = "Smoke-valid but training-invalid model.\n"
@@ -412,6 +518,58 @@ test("candidate inference requires only its static receipt and does not consume 
 
   expect(generated.value.source).toBe(source)
   expect(await Bun.file(join(generated.value.artifact_dir, "model.lib")).exists()).toBe(true)
+})
+
+test("candidate inference rejects a static receipt without a public-training run", async () => {
+  const model_dir = await prepareModelDirectory()
+  const source = ".SUBCKT GAIN IN OUT\nE1 OUT 0 IN 0 1\n.ENDS GAIN\n"
+  const card = "Static-only model.\n"
+  const error = await generateModelCandidate({
+    model_dir,
+    contract,
+    validation_plan,
+    evidence_dir: join(model_dir, "evidence"),
+    strategy_guidance: "Use a dependent source.",
+    stage_id: "generate_model",
+    phase_label: "test missing public training receipt",
+    signal: new AbortController().signal,
+    use_openai: false,
+    agent_client: {
+      async run(input) {
+        await Promise.all([
+          Bun.write(join(input.workspace, "model.lib"), source),
+          Bun.write(join(input.workspace, "model-card.md"), card),
+        ])
+        const manifest = createModelManifest({
+          model_interface: contract.interface,
+          model_source: source,
+          simulator: "ngspice",
+        })
+        await Bun.write(
+          join(input.workspace, MODEL_CANDIDATE_CHECK_RECEIPT_FILE),
+          `${JSON.stringify({
+            version: 1,
+            status: "passed",
+            checks: ["model_contract", "model_card", "static_source"],
+            revision: manifest.revision,
+            entry_name: manifest.entry_name,
+            pin_count: manifest.pins.length,
+            model_card_sha256: createHash("sha256").update(card).digest("hex"),
+          })}\n`,
+        )
+        return { attempts: 1, duration_ms: 1, output_tail: "" }
+      },
+    },
+    ngspice_path: "ngspice-test",
+    tsci_path: "tsci-test",
+    max_artifact_attempts: 1,
+    debug_dir: join(model_dir, "debug-missing-training-receipt"),
+    on_output: () => undefined,
+  }).catch((caught) => caught)
+
+  expect(error).toBeInstanceOf(PipelineError)
+  expect((error as Error).message).toContain("public ngspice and tscircuit-viewer training validation")
+  expect(await Bun.file(join(model_dir, "candidates")).exists()).toBe(false)
 })
 
 test("candidate inference does not run a simulator or spend a correction attempt on simulator syntax", async () => {

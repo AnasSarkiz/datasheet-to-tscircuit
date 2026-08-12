@@ -425,6 +425,39 @@ function deterministicAgent(calls: string[]): AgentClient {
           join(input.workspace, ".candidate-check.json"),
           `${JSON.stringify(candidate_receipt)}\n`,
         )
+        const training_plan = JSON.parse(
+          await Bun.file(join(input.workspace, "model-training-plan.json")).text(),
+        ) as ValidationPlan
+        const training_validation = {
+          version: 1 as const,
+          status: "passed" as const,
+          cases: training_plan.cases.map((validation_case) => {
+            const series = validation_case.observations.map((observation) => ({
+              observation_id: observation.id,
+              status: "passed" as const,
+              metrics: { sample_count: 1, normalized_max_error: 0, normalized_rmse: 0 },
+              samples: [{ x: 0, reference_y: 0, simulated_y: 0, error: 0 }],
+              error_codes: [],
+            }))
+            return {
+              case_id: validation_case.id,
+              status: "passed" as const,
+              server_series: series,
+              viewer_series: series,
+              error_codes: [],
+            }
+          }),
+          error_codes: [],
+        }
+        const training_receipt = await createModelTrainingCheckReceipt({
+          workspace: input.workspace,
+          candidate: candidate_receipt,
+          training_validation,
+        })
+        await Bun.write(
+          join(input.workspace, MODEL_TRAINING_CHECK_RECEIPT_FILE),
+          `${JSON.stringify(training_receipt)}\n`,
+        )
       } else {
         throw new Error(`Unexpected agent phase: ${input.phase_label}`)
       }

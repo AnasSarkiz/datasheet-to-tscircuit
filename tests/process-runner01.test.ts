@@ -356,7 +356,10 @@ test("TsciAgentClient confines model candidates to scoped read/write tools", asy
     expect(request.command).toContain("--no-context-files")
     expect(request.command).toContain("--system-prompt")
     expect(request.command).toContain("--append-system-prompt")
-    expect(request.command).toContain("workspace_read,model_output_write,check_model_candidate")
+    const tools_index = request.command.indexOf("--tools")
+    expect(request.command[tools_index + 1]).toBe(
+      "workspace_read,model_output_write,check_model_candidate,fit_model_parameters",
+    )
     const extension_index = request.command.indexOf("--extension")
     expect(request.command[extension_index + 1]).toEndWith("model-candidate-tools-extension.ts")
   }

@@ -1,6 +1,8 @@
 import type { ValidationRunResult } from "../spice-validation"
 
 const PARAMETER_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+const REFERENCE_COORDINATE_PARAMETER_PATTERN =
+  /(?:^|_)(?:sample|point|graph|figure|case|reference|refpoint|fixture|observation)(?:_|\d|$)|(?:^|_)(?:t|time)_\d/i
 const NUMBER_SOURCE = "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?"
 const PARAMETER_LINE_PATTERN = new RegExp(
   `^(\\s*\\.param\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s*=\\s*)(${NUMBER_SOURCE})(\\s*(?:[;$].*)?)$`,
@@ -145,9 +147,9 @@ export function scoreModelFitValidation(result: ValidationRunResult): ModelFitSc
 export function compareModelFitScores(left: ModelFitScore, right: ModelFitScore): number {
   const fields: Array<[number, number]> = [
     [left.runnable ? 0 : 1, right.runnable ? 0 : 1],
+    [left.failed_series_count, right.failed_series_count],
     [left.worst_normalized_max_error, right.worst_normalized_max_error],
     [left.mean_normalized_rmse, right.mean_normalized_rmse],
-    [left.failed_series_count, right.failed_series_count],
   ]
   for (const [left_value, right_value] of fields) {
     if (left_value < right_value) return -1
@@ -196,6 +198,11 @@ function validateRanges(
   for (const range of ranges) {
     if (!PARAMETER_NAME_PATTERN.test(range.name)) {
       throw new Error(`Invalid SPICE parameter name ${range.name}`)
+    }
+    if (REFERENCE_COORDINATE_PARAMETER_PATTERN.test(range.name)) {
+      throw new Error(
+        `Parameter ${range.name} looks tied to a validation sample, graph, case, fixture, or time coordinate; fit only physically meaningful model parameters`,
+      )
     }
     const normalized = range.name.toUpperCase()
     if (seen.has(normalized)) throw new Error(`Parameter fitting range ${range.name} is duplicated`)

@@ -358,7 +358,7 @@ wait_for_component
 | `prepare_workspace` | Copy canonical inputs and derive an exact server-owned SPICE interface from accepted pin evidence. |
 | `find_reference_graphs` | Scan the complete PDF, retain eligible datasheet graph crops and independently verified numeric traces, and publish them to Datasheet Reference. |
 | `create_comparison_graphs` | Turn accepted reference traces and printed conditions into the comparison cases used by later simulation scoring. |
-| `infer_spice_model` | Infer a self-contained `model.lib` and explanatory `model-card.md`; derive the manifest and revision on the server. |
+| `infer_spice_model` | Infer a self-contained `model.lib` and explanatory `model-card.md`; run bounded simulation-guided checks and parameter fitting against public training samples; retain the best complete candidate; derive the manifest and revision on the server. |
 | `create_simulation_tsx` | Render every validation case to a standalone, hash-retained TSX source in one deterministic pass. |
 | `run_simulations` | Execute ngspice, private stimulus-causality replays, and the retained tscircuit TSX sources; persist raw outputs and viewer Circuit JSON. |
 | `compare_simulation_outputs` | Compare simulator outputs with the reference/comparison curves and emit a dedicated comparison receipt plus closed-enum repair feedback. |
@@ -417,6 +417,10 @@ markers:
   observer point remains inside and touches the waveform in that exact crop.
 - `model-contract.json` combines the interface fixed for the current invocation
   with accepted characterization requirements.
+- `model-training-plan.json` is a server-generated, candidate-workspace-only
+  projection of the canonical validation plan. It preserves the exact public
+  fixture topology but replaces every curve comparison with only the samples in
+  the deterministic training contract. It contains no private causality replay.
 - `validation-plan.json` is a declarative circuit contract. An agent proposes
   fixture elements, analyses, and observations. Numeric references and
   datasheet evidence are server-owned output fields: the proposal parser
@@ -447,12 +451,17 @@ markers:
   copied to legacy root paths afterward are compatibility mirrors.
 
 The model-generation agent does not receive `validation-plan.json` or raw
-validation artifacts. For each fresh modeled reference curve, the server keeps
-the endpoints and alternating interior samples in a deterministic training view
-and withholds the complementary interior samples. Fresh curves therefore need
-at least eight points, with the minimum increasing by crop width up to 48 points.
-Generation and repair see only that training contract; the immutable full
-contract remains authoritative for scoring and publication. A regression model
+authoritative validation artifacts. It receives only the training-filtered
+`model-contract.json` and `model-training-plan.json`. For each fresh modeled
+reference curve, the server keeps the endpoints and alternating interior samples
+in a deterministic training view and withholds the complementary interior
+samples. Fresh curves therefore need at least eight points, with the minimum
+increasing by crop width up to 48 points.
+Initial generation may run the public plan through ngspice and the tscircuit
+viewer, inspect bounded public-sample residuals, and deterministically fit at
+most six declared numeric `.param` values within the shared search budget.
+Later repair sees only closed aggregate feedback. The immutable full contract
+remains authoritative for scoring and publication. A regression model
 that matches every visible sample but misses a held-out sample fails full server
 scoring.
 
@@ -502,17 +511,18 @@ The private flattened-pulse replay runs after initial generation and every
 repair; its dynamic-region comparison rejects token stimulus dependence and its
 detailed waveform is never returned to the repair agent.
 
-Generation and repair also use a fail-closed agent capability profile. The only
+Initial generation uses a fail-closed agent capability profile. The only
 enabled tool names come from one explicit extension: one reader confined to the
-canonical temporary workspace and one writer confined to `model.lib` and
-`model-card.md`. There is no shell, unrestricted built-in file tool, ambient
+canonical temporary workspace, one writer confined to `model.lib` and
+`model-card.md`, the public-training candidate checker, and the bounded numeric
+parameter fitter. There is no shell, unrestricted built-in file tool, ambient
 context-file discovery, or additional extension. The custom names do not match
 built-ins, so an extension-load failure leaves the agent without tools instead
 of silently restoring broad filesystem access. A repair receives the preceding
 model plus an aggregate enum-and-count failure summary; simulator output, paths,
 case IDs, observation IDs, metrics, sample counts, fixture values, hashes, and
-validation coordinates never cross into its workspace. This keeps optimization
-tied to documented behavior instead of a visible testbench.
+validation coordinates never cross into its workspace. Full-curve residuals,
+held-out samples, and causality controls never enter either agent boundary.
 
 The declarative validation language currently supports operating-point, DC
 sweep, and transient analyses; resistor, capacitor, inductor, diode, voltage

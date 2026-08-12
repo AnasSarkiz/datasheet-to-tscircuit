@@ -52,7 +52,7 @@ export interface ModelRunnerContext {
   agent_bin: string
   tsci_bin: string
   use_openai?: boolean
-  /** @deprecated The model workflow no longer executes ngspice. */
+  /** Optional executable override for public model-training checks. */
   ngspice_bin?: string
   agent_transport_retry_limit?: number
   agent_transport_retry_base_delay_ms?: number
@@ -183,7 +183,7 @@ export interface ModelPipelineServices {
   process_runner: ProcessRunner
   strategy_registry: ModelStrategyRegistry
   tsci_bin: string
-  /** @deprecated The model workflow no longer executes ngspice. */
+  /** Optional executable override for public model-training checks. */
   ngspice_bin?: string
   /** @deprecated The model workflow no longer executes ngspice. */
   ngspice_executor?: NgspiceExecutor

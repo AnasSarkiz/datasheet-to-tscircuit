@@ -59,6 +59,32 @@ test("bounded parameter search explores globally and refines deterministically",
   expect(result.improvements.length).toBeGreaterThan(1)
 })
 
+test("bounded fitting moves a synthetic first-order time constant toward the known target", async () => {
+  const target_tau = 1e-3
+  const sample_times = [2.5e-4, 5e-4, 1e-3, 2e-3, 4e-3]
+  const target = sample_times.map((time) => 1 - Math.exp(-time / target_tau))
+  const result = await searchModelParameters({
+    source: ".param TAU_MAIN=5e-3\n",
+    ranges: [{ name: "TAU_MAIN", min: 2e-4, max: 1e-2, scale: "log" }],
+    max_evaluations: 32,
+    evaluate: async (candidate) => {
+      const tau = readModelFitParameterDeclarations(candidate)[0]!.value
+      const errors = sample_times.map((time, index) => Math.abs(1 - Math.exp(-time / tau) - target[index]!))
+      const rmse = Math.sqrt(errors.reduce((sum, value) => sum + value ** 2, 0) / errors.length)
+      return {
+        runnable: true,
+        failed_series_count: Math.max(...errors) > 0.05 ? 1 : 0,
+        worst_normalized_max_error: Math.max(...errors),
+        mean_normalized_rmse: rmse,
+      }
+    },
+  })
+
+  expect(result.best.score.mean_normalized_rmse).toBeLessThan(result.initial.score.mean_normalized_rmse)
+  expect(result.best.values.TAU_MAIN).toBeGreaterThan(8e-4)
+  expect(result.best.values.TAU_MAIN).toBeLessThan(1.25e-3)
+})
+
 test("fit scoring rejects simulator failures before comparing numeric residuals", () => {
   const validation = (runnable: boolean, normalized_error: number): ValidationRunResult => ({
     version: 1,
@@ -102,6 +128,41 @@ test("fit scoring rejects simulator failures before comparing numeric residuals"
   expect(stable.runnable).toBe(true)
   expect(broken.runnable).toBe(false)
   expect(compareModelFitScores(stable, broken)).toBeLessThan(0)
+})
+
+test("fit scoring prefers more passing public series before smaller residuals", () => {
+  expect(
+    compareModelFitScores(
+      {
+        runnable: true,
+        failed_series_count: 0,
+        worst_normalized_max_error: 0.2,
+        mean_normalized_rmse: 0.1,
+      },
+      {
+        runnable: true,
+        failed_series_count: 1,
+        worst_normalized_max_error: 0.01,
+        mean_normalized_rmse: 0.005,
+      },
+    ),
+  ).toBeLessThan(0)
+})
+
+test("fitting rejects validation-coordinate parameter names", async () => {
+  await expect(
+    searchModelParameters({
+      source: ".SUBCKT X A B\n.param graph7_t3=1\nB1 B 0 V={graph7_t3*V(A)}\n.ENDS X\n",
+      ranges: [{ name: "graph7_t3", min: 0.5, max: 2, scale: "linear" }],
+      max_evaluations: 3,
+      evaluate: async () => ({
+        runnable: true,
+        failed_series_count: 0,
+        worst_normalized_max_error: 0,
+        mean_normalized_rmse: 0,
+      }),
+    }),
+  ).rejects.toThrow("physically meaningful model parameters")
 })
 
 test("fitted R/C/L parameters require a positive search domain", async () => {

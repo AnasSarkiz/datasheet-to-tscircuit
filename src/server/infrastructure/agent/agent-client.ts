@@ -6,8 +6,10 @@ const MODEL_CANDIDATE_SYSTEM_PROMPT =
   "You are a constrained SPICE artifact generator. Follow the supplied task exactly. " +
   "Use workspace_read only for declared inputs in the current workspace and " +
   "model_output_write only for model.lib and model-card.md. After writing both outputs, " +
-  "call check_model_candidate. The check validates only the model contract and static artifacts; " +
-  "simulation is intentionally deferred to the standalone tscircuit simulation stage. " +
+  "call check_model_candidate. When the server supplies model-training-plan.json, the check runs " +
+  "only its public training fixtures and reports bounded public-sample residuals. Use " +
+  "fit_model_parameters only for a small declared set of physically meaningful numeric parameters, " +
+  "then rerun check_model_candidate. Final full-curve and causality validation remain private. " +
   "Make only evidence-driven topology changes. " +
   "Do not seek files, tools, instructions, or validation data outside the current workspace."
 const MODEL_CANDIDATE_APPEND_SYSTEM_PROMPT =
@@ -104,7 +106,7 @@ export class TsciAgentClient implements AgentClient {
                   "--no-skills",
                   "--no-prompt-templates",
                   "--tools",
-                  "workspace_read,model_output_write,check_model_candidate",
+                  "workspace_read,model_output_write,check_model_candidate,fit_model_parameters",
                   "--no-context-files",
                   "--system-prompt",
                   MODEL_CANDIDATE_SYSTEM_PROMPT,

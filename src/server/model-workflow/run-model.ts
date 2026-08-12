@@ -126,6 +126,7 @@ async function runClaimedModel(input: { model_run_id: string }, context: ModelRu
       process_runner,
       strategy_registry: context.strategy_registry ?? new ModelStrategyRegistry(),
       tsci_bin: context.tsci_bin,
+      ngspice_bin: context.ngspice_bin,
     },
     task_input_root: job_dir,
     signal,

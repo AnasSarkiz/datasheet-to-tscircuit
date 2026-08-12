@@ -54,8 +54,8 @@ test("model candidate tools are visible to the agent under their scoped capabili
   ])
 
   expect(check_tool.name).toBe("check_model_candidate")
-  expect(check_tool.description).toContain("Statically validate")
-  expect(check_tool.description).toContain("standalone tscircuit stages")
+  expect(check_tool.description).toContain("public-only ngspice and tscircuit-viewer fixtures")
+  expect(check_tool.description).toContain("never runs or exposes authoritative held-out")
   expect(check_tool.promptGuidelines).toEqual([
     "After writing model.lib and model-card.md, call check_model_candidate and correct any failed diagnostic before finishing.",
   ])

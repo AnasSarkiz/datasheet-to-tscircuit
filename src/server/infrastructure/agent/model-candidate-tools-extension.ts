@@ -592,8 +592,8 @@ export function createModelCandidateFileTools(
     name: "check_model_candidate",
     label: "check_model_candidate",
     description:
-      "Statically validate model.lib and model-card.md against the server-owned model contract. Simulation is performed later by the standalone tscircuit stages.",
-    promptSnippet: "Check the current model's static contract and artifact integrity",
+      "Validate model.lib and model-card.md against the server-owned contract. When model-training-plan.json is present, also run its public-only ngspice and tscircuit-viewer fixtures and return bounded public-sample metrics and residuals. This never runs or exposes authoritative held-out or causality validation.",
+    promptSnippet: "Check static integrity and the server-owned public training fixtures",
     promptGuidelines: [
       "After writing model.lib and model-card.md, call check_model_candidate and correct any failed diagnostic before finishing.",
     ],
