@@ -30,6 +30,7 @@ function finite(values: readonly (number | undefined)[]): number[] {
 export function viewerQualityCasesFromValidation(input: {
   case_ids: readonly string[]
   viewer_validation_by_case: Readonly<Record<string, ViewerSimulationValidation | undefined>>
+  included_observation_ids?: ReadonlySet<string>
 }): CandidateViewerQualityCase[] {
   return input.case_ids.map((case_id) => {
     const validation = input.viewer_validation_by_case[case_id]
@@ -37,11 +38,16 @@ export function viewerQualityCasesFromValidation(input: {
       case_id,
       available: validation?.simulation_valid === true,
       series:
-        validation?.series.map((series) => ({
-          passed: series.passed,
-          normalized_max_error: series.metrics.normalized_max_error,
-          normalized_rmse: series.metrics.normalized_rmse,
-        })) ?? [],
+        validation?.series
+          .filter(
+            ({ observation_id }) =>
+              !input.included_observation_ids || input.included_observation_ids.has(observation_id),
+          )
+          .map((series) => ({
+            passed: series.passed,
+            normalized_max_error: series.metrics.normalized_max_error,
+            normalized_rmse: series.metrics.normalized_rmse,
+          })) ?? [],
     }
   })
 }
@@ -54,6 +60,7 @@ export function viewerQualityCasesFromValidation(input: {
 export function createCandidateQuality(input: {
   result: ValidationRunResult
   viewer_cases: readonly CandidateViewerQualityCase[]
+  included_observation_ids?: ReadonlySet<string>
 }): CandidateQuality {
   const direct_failed_case_ids = new Set(
     input.result.cases.filter(({ status }) => status !== "passed").map(({ case_id }) => case_id),
@@ -65,7 +72,12 @@ export function createCandidateQuality(input: {
       failed_case_ids.add(viewer_case.case_id)
     }
   }
-  const direct_series = input.result.cases.flatMap(({ series }) => series)
+  const direct_series = input.result.cases
+    .flatMap(({ series }) => series)
+    .filter(
+      ({ observation_id }) =>
+        !input.included_observation_ids || input.included_observation_ids.has(observation_id),
+    )
   const viewer_series = input.viewer_cases.flatMap(({ series }) => series)
   const normalized_errors = finite([
     ...direct_series.flatMap(({ metrics }) => [metrics.normalized_max_error, metrics.normalized_rmse]),

@@ -221,3 +221,29 @@ test("repair rejects edits to the embedded immutable validation contract", async
 
   await expect(prepared.result).rejects.toThrow(/immutable validationCaseContract changed/)
 })
+
+test("repair rejects executable validation-harness edits even when the contract guard is unchanged", async () => {
+  const prepared = await prepareRepair({
+    async mutate(workspace, next_source, next_card) {
+      const tsx_path = join(workspace, "simulation-tsx", "startup.circuit.tsx")
+      const tsx = await readFile(tsx_path, "utf8")
+      await Promise.all([
+        Bun.write(join(workspace, "model.lib"), next_source),
+        Bun.write(join(workspace, "model-card.md"), next_card),
+        Bun.write(
+          join(workspace, "repair-plan.json"),
+          JSON.stringify({
+            version: 1,
+            target: "model",
+            affected_case_ids: ["startup"],
+            diagnosis: "The model gain is too low.",
+            planned_changes: ["Increase the model gain."],
+          }),
+        ),
+        Bun.write(tsx_path, tsx.replace('voltage="1V"', 'voltage="2V"')),
+      ])
+    },
+  })
+
+  await expect(prepared.result).rejects.toThrow(/implemented changes do not match target=model/)
+})

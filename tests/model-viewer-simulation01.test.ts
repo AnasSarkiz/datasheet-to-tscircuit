@@ -457,6 +457,57 @@ test("viewer validation scores the exact tscircuit time-domain graph", () => {
   ])
 })
 
+test("stimulus curve error is reported without failing an otherwise valid DUT response", () => {
+  const response = transient_case.observations[0]!
+  if (response.type !== "voltage") throw new Error("Expected voltage response fixture")
+  const validation_case: ValidationCase = {
+    ...transient_case,
+    observations: [
+      {
+        ...response,
+        id: "VIN",
+        role: "stimulus",
+        positive: "dut.IN",
+        reference: {
+          type: "curve",
+          tolerance: 0.01,
+          points: [
+            { x: 0, y: 9 },
+            { x: 0.001, y: 9 },
+            { x: 0.002, y: 9 },
+          ],
+        },
+      },
+      { ...response, role: "response" },
+    ],
+  }
+  const circuit_json = transientCircuit()
+  const graph = circuit_json.find((element) => element.type === "simulation_transient_voltage_graph")
+  const probe = circuit_json.find((element) => element.type === "simulation_voltage_probe")
+  if (!graph || !probe) throw new Error("Missing response graph fixture")
+  circuit_json.push(
+    {
+      ...probe,
+      simulation_voltage_probe_id: "vin_probe",
+      name: "probe_VIN",
+      signal_input_source_port_id: "dut_in",
+    } as AnyCircuitElement,
+    {
+      ...graph,
+      simulation_transient_voltage_graph_id: "vin_graph",
+      source_probe_id: "vin_probe",
+      name: "probe_VIN",
+    } as AnyCircuitElement,
+  )
+
+  const result = validateViewerSimulation({ validation_case, circuit_json })
+
+  expect(result.simulation_valid).toBe(true)
+  expect(result.passed).toBe(true)
+  expect(result.series.find(({ observation_id }) => observation_id === "VIN")?.passed).toBe(false)
+  expect(result.errors.some(({ kind }) => kind === "comparison")).toBe(true)
+})
+
 test("repair validation may change fixtures without changing the reference observation", () => {
   const repaired = transientCircuit() as MutableCircuitRecord[]
   const load = repaired.find(

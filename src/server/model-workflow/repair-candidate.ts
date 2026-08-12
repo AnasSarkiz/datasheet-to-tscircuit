@@ -144,16 +144,14 @@ function repairPrompt(input: {
 }): string {
   return `Diagnose and repair the current SPICE candidate using only the files in this isolated workspace.
 
-Before changing model.lib, model-card.md, or simulation-tsx, inspect candidate-diagnostics.json, validation-results.json, model-ui.json, the current model, and every affected TSX circuit. Write repair-plan.json first with exactly:
-{"version":1,"target":"model"|"tsx"|"both","affected_case_ids":[...],"diagnosis":"...","planned_changes":["..."]}
+Before changing model.lib or model-card.md, inspect candidate-diagnostics.json, validation-results.json, model-ui.json, the current model, and every affected TSX circuit. Write repair-plan.json first with exactly:
+{"version":1,"target":"model","affected_case_ids":[...],"diagnosis":"...","planned_changes":["..."]}
 
 Then implement exactly that diagnosis:
 - target=model: change model.lib/model-card.md and leave every TSX circuit unchanged. The server owns and will update the embedded modelSource metadata.
-- target=tsx: change one or more listed TSX circuits and leave model.lib/model-card.md byte-for-byte unchanged.
-- target=both: change the model and one or more listed TSX circuits.
 - Never edit the validation plan, model contract, evidence, references, graph crops, or digitized reference values.
 - Leave the validationCaseContract declaration and its void guard in every TSX byte-for-byte unchanged.
-- TSX may change its executable circuit topology, fixture, or stimulus when the diagnosis shows the circuit is wrong, but it must preserve the named observation and time-domain reference contract and remain a genuine general simulation of its named reference case.
+- The complete validation TSX is an immutable server-owned harness. Never edit its fixture, stimulus, application connection, analysis, probes, observations, or executable topology.
 - For a power converter, every private state read by a source that drives the modeled output must itself be driven by the measured output response. Do not add a separate EN/VIN-only soft-start state; express startup through an EN-qualified, output-error-driven controller state.
 - Do not add per-sample lookup tables, figure-specific output forcing, hidden reference data, or other curve-fitting hacks.
 - Do not run ngspice. The server will run the exact promoted TSX with tscircuit after this artifact is complete.
@@ -253,12 +251,8 @@ export async function generateRepairCandidate(input: {
         model_contract: input.contract,
         signal: input.signal,
       })
-      const [old_source, old_card] = await Promise.all([
-        readFile(input.previous.model_path, "utf8"),
-        readFile(input.previous.model_card_path, "utf8"),
-      ])
+      const old_source = await readFile(input.previous.model_path, "utf8")
       const model_changed = checked.generated.source !== old_source
-      const card_changed = checked.generated.card !== old_card
       const changed_cases: string[] = []
       for (const case_id of case_ids) {
         const [before, after] = await Promise.all([
@@ -273,17 +267,11 @@ export async function generateRepairCandidate(input: {
         }
       }
       const tsx_changed = changed_cases.length > 0
+      if (diagnosis.target !== "model") {
+        throw new Error("SPICE repair may target only the model; the validation TSX is server-owned")
+      }
       if (diagnosis.target === "model" && (!model_changed || tsx_changed)) {
         throw new Error("The implemented changes do not match target=model")
-      }
-      if (diagnosis.target === "tsx" && (model_changed || card_changed || !tsx_changed)) {
-        throw new Error("The implemented changes do not match target=tsx")
-      }
-      if (diagnosis.target === "both" && (!model_changed || !tsx_changed)) {
-        throw new Error("The implemented changes do not match target=both")
-      }
-      if (changed_cases.some((case_id) => !diagnosis.affected_case_ids.includes(case_id))) {
-        throw new Error("A TSX circuit changed without being named in affected_case_ids")
       }
       await Promise.all(
         case_ids.map(async (case_id) => {

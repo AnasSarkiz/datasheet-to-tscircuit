@@ -14,7 +14,12 @@ import {
   projectModelValidationSummary,
   validateModelCompletionIntegrity,
 } from "@/server/modeling"
-import { executeLocalNgspice, runSpiceValidation, type ValidationPlan } from "@/server/spice-validation"
+import {
+  executeLocalNgspice,
+  hashValidationInputs,
+  runSpiceValidation,
+  type ValidationPlan,
+} from "@/server/spice-validation"
 
 const temporary_directories: string[] = []
 
@@ -243,6 +248,100 @@ RLEAK OUT GND 1meg
         contract,
         plan,
         result: attached,
+        policy: "legacy_compatibility",
+      }),
+    ).toMatchObject({ valid: true })
+
+    const stimulus_requirement = {
+      ...contract.characterization.requirements[0]!,
+      requirement_id: "step_stimulus",
+      title: "Input step",
+      behavior: "The server-owned public input step",
+      reference_curve: {
+        ...contract.characterization.requirements[0]!.reference_curve!,
+        channel_role: "stimulus" as const,
+      },
+    }
+    const contract_with_stimulus: ModelContract = {
+      ...contract,
+      characterization: {
+        ...contract.characterization,
+        requirements: [...contract.characterization.requirements, stimulus_requirement],
+      },
+    }
+    const plan_with_stimulus: ValidationPlan = {
+      ...plan,
+      cases: plan.cases.map((validation_case) => ({
+        ...validation_case,
+        requirement_ids: [...validation_case.requirement_ids, "step_stimulus"],
+        observations: [
+          ...validation_case.observations,
+          {
+            id: "input_voltage",
+            role: "stimulus" as const,
+            requirement_id: "step_stimulus",
+            type: "voltage" as const,
+            positive: "dut.IN" as const,
+            negative: "dut.GND" as const,
+            unit: "V" as const,
+            scale: "linear" as const,
+            reference: { type: "curve" as const, tolerance: 0.1, points: curve_points },
+          },
+        ],
+      })),
+    }
+    const hashes = hashValidationInputs({ plan: plan_with_stimulus, model_source, manifest })
+    const result_with_stimulus = {
+      ...attached,
+      hashes,
+      stimulus_causality: { ...attached.stimulus_causality!, hashes },
+      cases: attached.cases.map((validation_case) => ({
+        ...validation_case,
+        series: [
+          ...validation_case.series,
+          {
+            ...validation_case.series[0]!,
+            observation_id: "input_voltage",
+          },
+        ],
+      })),
+    }
+    expect(
+      validateModelCompletionIntegrity({
+        model_source,
+        manifest,
+        contract: contract_with_stimulus,
+        plan: plan_with_stimulus,
+        result: result_with_stimulus,
+        policy: "legacy_compatibility",
+      }),
+    ).toMatchObject({ valid: true })
+
+    const stimulus_error = {
+      kind: "comparison" as const,
+      code: "curve_tolerance_exceeded",
+      message: "The simulated server-owned input differs from its digitized reference",
+    }
+    const result_with_imperfect_stimulus = {
+      ...result_with_stimulus,
+      errors: [stimulus_error],
+      cases: result_with_stimulus.cases.map((validation_case) => ({
+        ...validation_case,
+        errors: [stimulus_error],
+        series: validation_case.series.map((series) =>
+          series.observation_id === "input_voltage"
+            ? { ...series, passed: false, errors: [stimulus_error] }
+            : series,
+        ),
+      })),
+    }
+    expect(
+      validateModelCompletionIntegrity({
+        model_source,
+        manifest,
+        contract: contract_with_stimulus,
+        plan: plan_with_stimulus,
+        result: result_with_imperfect_stimulus,
         policy: "legacy_compatibility",
       }),
     ).toMatchObject({ valid: true })

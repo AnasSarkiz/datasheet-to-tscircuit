@@ -155,6 +155,13 @@ function requireEmptyErrors(value: unknown, path: string): void {
   if (value.length > 0) throw new Error(`${path} must be empty for a passing validation result`)
 }
 
+function requireExactErrors(value: unknown, expected: unknown[], path: string): void {
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array`)
+  if (JSON.stringify(value) !== JSON.stringify(expected)) {
+    throw new Error(`${path} must contain exactly the reported stimulus comparison errors`)
+  }
+}
+
 function parsePassedResult(
   value: unknown,
   plan: ValidationPlan,
@@ -169,7 +176,6 @@ function parsePassedResult(
   if (result.version !== 1) throw new Error("validation-results.json.version must be 1")
   if (result.passed !== true) throw new Error("validation-results.json does not contain a passing result")
   const hashes = parseHashes(result.hashes)
-  requireEmptyErrors(result.errors, "validation-results.json.errors")
   const bound_requirement_ids = new Set(
     contract.characterization.requirements.flatMap((requirement) =>
       requirement.support.status === "modeled" && requirement.reference_curve?.electrical_binding
@@ -183,8 +189,9 @@ function parsePassedResult(
   const expected_causality_observations = expected_causality_cases.reduce(
     (count, validation_case) =>
       count +
-      validation_case.observations.filter((observation) =>
-        bound_requirement_ids.has(observation.requirement_id),
+      validation_case.observations.filter(
+        (observation) =>
+          observation.role !== "stimulus" && bound_requirement_ids.has(observation.requirement_id),
       ).length,
     0,
   )
@@ -228,6 +235,7 @@ function parsePassedResult(
       `validation-results.json.cases has ${result.cases.length} cases; the current plan has ${plan.cases.length}`,
     )
   }
+  const allowed_result_errors: unknown[] = []
   result.cases.forEach((case_value, case_index) => {
     const path = `validation-results.json.cases[${case_index}]`
     const validation_case = record(case_value, path)
@@ -244,7 +252,6 @@ function parsePassedResult(
     if (validation_case.analysis !== planned_case.analysis.type) {
       throw new Error(`${path}.analysis does not match the current validation plan`)
     }
-    requireEmptyErrors(validation_case.errors, `${path}.errors`)
     nonNegativeFiniteNumber(validation_case.elapsed_ms, `${path}.elapsed_ms`)
     if (!SHA256_PATTERN.test(nonEmptyString(validation_case.netlist_sha256, `${path}.netlist_sha256`))) {
       throw new Error(`${path}.netlist_sha256 is not SHA-256`)
@@ -256,6 +263,7 @@ function parsePassedResult(
     if (validation_case.series.length !== planned_case.observations.length) {
       throw new Error(`${path}.series does not cover every current validation-plan observation`)
     }
+    const allowed_case_errors: unknown[] = []
     validation_case.series.forEach((series_value, series_index) => {
       const series_path = `${path}.series[${series_index}]`
       const series = record(series_value, series_path)
@@ -268,8 +276,26 @@ function parsePassedResult(
       if (!planned_observation || series.observation_id !== planned_observation.id) {
         throw new Error(`${series_path}.observation_id does not match the current validation plan`)
       }
-      if (series.passed !== true) throw new Error(`${series_path}.passed must be true`)
-      requireEmptyErrors(series.errors, `${series_path}.errors`)
+      if (planned_observation.role === "stimulus") {
+        if (typeof series.passed !== "boolean") throw new Error(`${series_path}.passed must be boolean`)
+        if (!Array.isArray(series.errors)) throw new Error(`${series_path}.errors must be an array`)
+        for (const error_value of series.errors) {
+          const error = record(error_value, `${series_path}.errors[]`)
+          if (error.kind !== "comparison") {
+            throw new Error(`${series_path}.errors may contain only comparison errors for a stimulus`)
+          }
+        }
+        if (series.passed === true && series.errors.length > 0) {
+          throw new Error(`${series_path}.errors must be empty when the stimulus comparison passed`)
+        }
+        if (series.passed === false && series.errors.length === 0) {
+          throw new Error(`${series_path}.errors must report why the stimulus comparison failed`)
+        }
+        allowed_case_errors.push(...series.errors)
+      } else {
+        if (series.passed !== true) throw new Error(`${series_path}.passed must be true`)
+        requireEmptyErrors(series.errors, `${series_path}.errors`)
+      }
       if (series.type !== planned_observation.type) {
         throw new Error(`${series_path}.type does not match the current validation plan`)
       }
@@ -310,7 +336,10 @@ function parsePassedResult(
         }
       }
     })
+    requireExactErrors(validation_case.errors, allowed_case_errors, `${path}.errors`)
+    allowed_result_errors.push(...allowed_case_errors)
   })
+  requireExactErrors(result.errors, allowed_result_errors, "validation-results.json.errors")
   return { ...(value as ValidationRunResult), hashes }
 }
 

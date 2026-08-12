@@ -221,13 +221,22 @@ export function validateViewerSimulation(input: {
   }
   const series_errors = series.flatMap(({ errors: observation_errors }) => observation_errors)
   const all_errors = [...errors, ...series_errors]
+  const response_observation_ids = new Set(
+    validation_case.observations.filter(({ role }) => role !== "stimulus").map(({ id }) => id),
+  )
   const simulation_valid =
     all_errors.every(({ kind }) => kind === "comparison") &&
     series.length === validation_case.observations.length &&
     series.every(({ points }) => points.length >= 2)
   return {
     simulation_valid,
-    passed: simulation_valid && series.every(({ passed }) => passed),
+    // Stimulus traces remain fully simulated, reported, and topology-checked,
+    // but a DUT candidate cannot improve a server-owned source waveform.
+    passed:
+      simulation_valid &&
+      series
+        .filter(({ observation_id }) => response_observation_ids.has(observation_id))
+        .every(({ passed }) => passed),
     series,
     errors: all_errors,
   }

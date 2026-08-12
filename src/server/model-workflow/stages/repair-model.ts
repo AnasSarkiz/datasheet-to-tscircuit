@@ -39,6 +39,42 @@ function budgetExpired(error: unknown, parent: AbortSignal, attempt: AbortSignal
   )
 }
 
+function responseOnlyRepairResult(
+  result: ValidationRunResult,
+  response_observation_ids: ReadonlySet<string>,
+): ValidationRunResult {
+  const cases = result.cases.map((validation_case) => {
+    const series = validation_case.series.filter(({ observation_id }) =>
+      response_observation_ids.has(observation_id),
+    )
+    const errors = [
+      ...validation_case.errors.filter(({ kind }) => kind !== "comparison"),
+      ...series.flatMap(({ errors: series_errors }) => series_errors),
+    ]
+    return {
+      ...validation_case,
+      series,
+      errors,
+      status:
+        validation_case.status === "cancelled"
+          ? ("cancelled" as const)
+          : errors.length === 0 && series.every(({ passed }) => passed)
+            ? ("passed" as const)
+            : ("failed" as const),
+    }
+  })
+  const errors = [
+    ...result.errors.filter(({ kind }) => kind !== "comparison"),
+    ...cases.flatMap(({ errors: case_errors }) => case_errors),
+  ]
+  return {
+    ...result,
+    cases,
+    errors,
+    passed: cases.every(({ status }) => status === "passed") && errors.length === 0,
+  }
+}
+
 export const repairModelStage = defineModelStage({
   id: "repair_spice_model",
   depends_on: ["compare_simulation_outputs"],
@@ -103,13 +139,18 @@ export const repairModelStage = defineModelStage({
     ])
     const contract = parseFreshModelContract(contract_value)
     const plan = plan_value as ValidationPlan
+    const response_observation_ids = new Set(
+      plan.cases.flatMap(({ observations }) =>
+        observations.filter(({ role }) => role !== "stimulus").map(({ id }) => id),
+      ),
+    )
     const strategy = services.strategy_registry.require(
       contract.characterization.strategy,
       contract.characterization.family,
     )
     let result = (await readJson(comparison.result_path)) as ValidationRunResult
     let repair_feedback = createModelRepairFeedback(
-      result,
+      responseOnlyRepairResult(result, response_observation_ids),
       undefined,
       comparison.stimulus_causality_failure
         ? { required: true, passed: false, ...comparison.stimulus_causality_failure }
@@ -145,14 +186,17 @@ export const repairModelStage = defineModelStage({
     }
     let best_quality = createCandidateQuality({
       result,
+      included_observation_ids: response_observation_ids,
       viewer_cases: result.cases.map(({ case_id, series }) => ({
         case_id,
         available: series.length > 0,
-        series: series.map(({ passed, metrics }) => ({
-          passed,
-          normalized_max_error: metrics.normalized_max_error,
-          normalized_rmse: metrics.normalized_rmse,
-        })),
+        series: series
+          .filter(({ observation_id }) => response_observation_ids.has(observation_id))
+          .map(({ passed, metrics }) => ({
+            passed,
+            normalized_max_error: metrics.normalized_max_error,
+            normalized_rmse: metrics.normalized_rmse,
+          })),
       })),
     })
 
@@ -229,7 +273,6 @@ export const repairModelStage = defineModelStage({
             signal: attempt_signal,
             append: (stream, message) =>
               appendModelLog(services.model_run_store, context.model_run_id, stream, message),
-            fixture_policy: "repairable",
           })
         } catch (error) {
           if (budgetExpired(error, signal, attempt_signal)) break
@@ -238,9 +281,11 @@ export const repairModelStage = defineModelStage({
 
         const candidate_quality = createCandidateQuality({
           result: validation.result,
+          included_observation_ids: response_observation_ids,
           viewer_cases: viewerQualityCasesFromValidation({
             case_ids: plan.cases.map(({ id }) => id),
             viewer_validation_by_case: validation.preview_build.viewer_validation_by_case,
+            included_observation_ids: response_observation_ids,
           }),
         })
         const improved = validation.passed || compareCandidateQuality(candidate_quality, best_quality) < 0
@@ -275,7 +320,7 @@ export const repairModelStage = defineModelStage({
         best_quality = candidate_quality
         result = validation.result
         repair_feedback = createModelRepairFeedback(
-          validation.result,
+          responseOnlyRepairResult(validation.result, response_observation_ids),
           validation.preview_build.viewer_validation_by_case,
           validation.stimulus_causality,
           validation.preview_build.viewer_model_errors_by_case,
