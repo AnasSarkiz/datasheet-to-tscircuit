@@ -344,7 +344,7 @@ RLEAK OUT GND 1meg
         result: result_with_imperfect_stimulus,
         policy: "legacy_compatibility",
       }),
-    ).toMatchObject({ valid: true })
+    ).toMatchObject({ valid: false, reason: expect.stringContaining("must be empty") })
   })
 
   testWithNgspice("rejects an output that replays independently of the bound input step", async () => {

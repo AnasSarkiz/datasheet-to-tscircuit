@@ -40,6 +40,8 @@ export interface ModelParameterSearchResult {
   readonly improvements: readonly ModelFitEvaluation[]
 }
 
+export type ModelParameterFitSelection = "lexicographic" | "balanced_non_regression"
+
 interface ParsedParameterLine {
   readonly line_index: number
   readonly name: string
@@ -265,6 +267,7 @@ export async function searchModelParameters(input: {
   source: string
   ranges: readonly ModelFitParameterRange[]
   max_evaluations: number
+  selection?: ModelParameterFitSelection
   signal?: AbortSignal
   evaluate: (source: string) => Promise<ModelFitScore>
 }): Promise<ModelParameterSearchResult> {
@@ -291,8 +294,44 @@ export async function searchModelParameters(input: {
   let best_units = [...initial_units]
   improvements.push(initial)
 
+  const baselineRatio = (value: number, baseline: number): number =>
+    baseline === 0 ? (value === 0 ? 1 : Number.MAX_VALUE) : value / baseline
+  const isBaselineNonRegression = (score: ModelFitScore): boolean => {
+    if (!score.runnable || score.failed_series_count > initial.score.failed_series_count) return false
+    const tolerance = 1e-12
+    return (
+      score.worst_normalized_max_error <= initial.score.worst_normalized_max_error * (1 + tolerance) &&
+      score.mean_normalized_rmse <= initial.score.mean_normalized_rmse * (1 + tolerance)
+    )
+  }
+  const compareBalanced = (left: ModelFitScore, right: ModelFitScore): number => {
+    const left_feasible = isBaselineNonRegression(left)
+    const right_feasible = isBaselineNonRegression(right)
+    if (left_feasible !== right_feasible) return left_feasible ? -1 : 1
+    if (!left_feasible) return compareModelFitScores(left, right)
+    if (left.failed_series_count !== right.failed_series_count) {
+      return left.failed_series_count - right.failed_series_count
+    }
+    const left_ratios = [
+      baselineRatio(left.worst_normalized_max_error, initial.score.worst_normalized_max_error),
+      baselineRatio(left.mean_normalized_rmse, initial.score.mean_normalized_rmse),
+    ]
+    const right_ratios = [
+      baselineRatio(right.worst_normalized_max_error, initial.score.worst_normalized_max_error),
+      baselineRatio(right.mean_normalized_rmse, initial.score.mean_normalized_rmse),
+    ]
+    const left_worst_ratio = Math.max(...left_ratios)
+    const right_worst_ratio = Math.max(...right_ratios)
+    if (left_worst_ratio !== right_worst_ratio) return left_worst_ratio - right_worst_ratio
+    const left_mean_ratio = (left_ratios[0]! + left_ratios[1]!) / 2
+    const right_mean_ratio = (right_ratios[0]! + right_ratios[1]!) / 2
+    if (left_mean_ratio !== right_mean_ratio) return left_mean_ratio - right_mean_ratio
+    return compareModelFitScores(left, right)
+  }
+  const compare = input.selection === "balanced_non_regression" ? compareBalanced : compareModelFitScores
+
   const accept = (candidate: ModelFitEvaluation, units: readonly number[]) => {
-    if (compareModelFitScores(candidate.score, best.score) >= 0) return
+    if (compare(candidate.score, best.score) >= 0) return
     best = candidate
     best_units = [...units]
     improvements.push(candidate)

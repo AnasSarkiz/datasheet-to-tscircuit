@@ -12,6 +12,7 @@ import {
 } from "../candidate-quality"
 import { type CandidateValidationResult, validateCandidate } from "../candidate-validation"
 import { generateRepairCandidate, type StoredRepairCandidate } from "../repair-candidate"
+import { modelFitSeriesKey } from "../model-parameter-fit"
 import {
   appendModelLog,
   createModelRepairFeedback,
@@ -45,7 +46,7 @@ function responseOnlyRepairResult(
 ): ValidationRunResult {
   const cases = result.cases.map((validation_case) => {
     const series = validation_case.series.filter(({ observation_id }) =>
-      response_observation_ids.has(observation_id),
+      response_observation_ids.has(modelFitSeriesKey(validation_case.case_id, observation_id)),
     )
     const errors = [
       ...validation_case.errors.filter(({ kind }) => kind !== "comparison"),
@@ -140,8 +141,10 @@ export const repairModelStage = defineModelStage({
     const contract = parseFreshModelContract(contract_value)
     const plan = plan_value as ValidationPlan
     const response_observation_ids = new Set(
-      plan.cases.flatMap(({ observations }) =>
-        observations.filter(({ role }) => role !== "stimulus").map(({ id }) => id),
+      plan.cases.flatMap((validation_case) =>
+        validation_case.observations
+          .filter(({ role }) => role !== "stimulus")
+          .map(({ id }) => modelFitSeriesKey(validation_case.id, id)),
       ),
     )
     const strategy = services.strategy_registry.require(
@@ -191,7 +194,9 @@ export const repairModelStage = defineModelStage({
         case_id,
         available: series.length > 0,
         series: series
-          .filter(({ observation_id }) => response_observation_ids.has(observation_id))
+          .filter(({ observation_id }) =>
+            response_observation_ids.has(modelFitSeriesKey(case_id, observation_id)),
+          )
           .map(({ passed, metrics }) => ({
             passed,
             normalized_max_error: metrics.normalized_max_error,

@@ -1,5 +1,6 @@
 import type { ViewerSimulationValidation } from "../modeling"
 import type { ValidationRunResult } from "../spice-validation"
+import { modelFitSeriesKey } from "./model-parameter-fit"
 import { getNonRepairableValidationErrors } from "./validation-repair-policy"
 
 export interface CandidateViewerQualityCase {
@@ -41,7 +42,8 @@ export function viewerQualityCasesFromValidation(input: {
         validation?.series
           .filter(
             ({ observation_id }) =>
-              !input.included_observation_ids || input.included_observation_ids.has(observation_id),
+              !input.included_observation_ids ||
+              input.included_observation_ids.has(modelFitSeriesKey(case_id, observation_id)),
           )
           .map((series) => ({
             passed: series.passed,
@@ -72,12 +74,13 @@ export function createCandidateQuality(input: {
       failed_case_ids.add(viewer_case.case_id)
     }
   }
-  const direct_series = input.result.cases
-    .flatMap(({ series }) => series)
-    .filter(
+  const direct_series = input.result.cases.flatMap(({ case_id, series }) =>
+    series.filter(
       ({ observation_id }) =>
-        !input.included_observation_ids || input.included_observation_ids.has(observation_id),
-    )
+        !input.included_observation_ids ||
+        input.included_observation_ids.has(modelFitSeriesKey(case_id, observation_id)),
+    ),
+  )
   const viewer_series = input.viewer_cases.flatMap(({ series }) => series)
   const normalized_errors = finite([
     ...direct_series.flatMap(({ metrics }) => [metrics.normalized_max_error, metrics.normalized_rmse]),

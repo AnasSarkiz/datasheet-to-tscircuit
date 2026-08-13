@@ -4,6 +4,7 @@ import {
   createCandidateQuality,
   type CandidateViewerQualityCase,
 } from "@/server/model-workflow/candidate-quality"
+import { modelFitSeriesKey } from "@/server/model-workflow/model-parameter-fit"
 import type { ValidationRunResult } from "@/server/spice-validation"
 
 function result(input: {
@@ -125,4 +126,19 @@ test("candidate quality penalizes stimulus-insensitive overfit before residual s
   })
 
   expect(compareCandidateQuality(causal, overfit)).toBeLessThan(0)
+})
+
+test("candidate quality scopes repeated observation ids to their validation case", () => {
+  const first = result({ normalized_error: 0.2 })
+  const second_case = structuredClone(first.cases[0]!)
+  second_case.case_id = "second"
+  second_case.series[0]!.metrics.normalized_max_error = 1.2
+  const quality = createCandidateQuality({
+    result: { ...first, cases: [first.cases[0]!, second_case] },
+    viewer_cases: [],
+    included_observation_ids: new Set([modelFitSeriesKey("transient", "output")]),
+  })
+
+  expect(quality.worst_normalized_error).toBe(0.2)
+  expect(quality.failed_series_count).toBe(1)
 })

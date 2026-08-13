@@ -401,6 +401,7 @@ async function runProductionParameterFit(input: {
       source: original_source,
       ranges: input.parameters,
       max_evaluations: input.max_evaluations,
+      selection: "balanced_non_regression",
       signal: input.signal,
       evaluate: async (model_source) => {
         const validation = await runSpiceValidation({

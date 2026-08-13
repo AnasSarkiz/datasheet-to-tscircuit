@@ -457,7 +457,7 @@ test("viewer validation scores the exact tscircuit time-domain graph", () => {
   ])
 })
 
-test("stimulus curve error is reported without failing an otherwise valid DUT response", () => {
+test("stimulus curve error remains a strict final-validation failure", () => {
   const response = transient_case.observations[0]!
   if (response.type !== "voltage") throw new Error("Expected voltage response fixture")
   const validation_case: ValidationCase = {
@@ -503,7 +503,7 @@ test("stimulus curve error is reported without failing an otherwise valid DUT re
   const result = validateViewerSimulation({ validation_case, circuit_json })
 
   expect(result.simulation_valid).toBe(true)
-  expect(result.passed).toBe(true)
+  expect(result.passed).toBe(false)
   expect(result.series.find(({ observation_id }) => observation_id === "VIN")?.passed).toBe(false)
   expect(result.errors.some(({ kind }) => kind === "comparison")).toBe(true)
 })

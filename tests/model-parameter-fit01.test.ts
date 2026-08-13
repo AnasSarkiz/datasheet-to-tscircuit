@@ -86,6 +86,39 @@ test("bounded fitting moves a synthetic first-order time constant toward the kno
   expect(result.best.values.TAU_MAIN).toBeLessThan(1.25e-3)
 })
 
+test("balanced fitting improves both baseline error metrics instead of hiding a mean regression", async () => {
+  const result = await searchModelParameters({
+    source: ".param A=0\n",
+    ranges: [{ name: "A", min: 0, max: 1, scale: "linear" }],
+    max_evaluations: 16,
+    selection: "balanced_non_regression",
+    evaluate: async (candidate) => {
+      const value = readModelFitParameterDeclarations(candidate)[0]!.value
+      if (value >= 0.45 && value <= 0.55) {
+        return {
+          runnable: true,
+          failed_series_count: 1,
+          worst_normalized_max_error: 0.5,
+          mean_normalized_rmse: 1.1,
+        }
+      }
+      const improvement = Math.min(value, 0.25)
+      return {
+        runnable: true,
+        failed_series_count: 1,
+        worst_normalized_max_error: 1 - improvement,
+        mean_normalized_rmse: 1 - improvement / 2,
+      }
+    },
+  })
+
+  expect(result.best.score.worst_normalized_max_error).toBeLessThan(
+    result.initial.score.worst_normalized_max_error,
+  )
+  expect(result.best.score.mean_normalized_rmse).toBeLessThan(result.initial.score.mean_normalized_rmse)
+  expect(result.best.score.mean_normalized_rmse).toBeLessThanOrEqual(1)
+})
+
 test("fit scoring rejects simulator failures before comparing numeric residuals", () => {
   const validation = (runnable: boolean, normalized_error: number): ValidationRunResult => ({
     version: 1,
