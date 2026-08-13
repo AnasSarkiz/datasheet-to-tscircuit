@@ -152,6 +152,14 @@ Then implement exactly that diagnosis:
 - Never edit the validation plan, model contract, evidence, references, graph crops, or digitized reference values.
 - Leave the validationCaseContract declaration and its void guard in every TSX byte-for-byte unchanged.
 - The complete validation TSX is an immutable server-owned harness. Never edit its fixture, stimulus, application connection, analysis, probes, observations, or executable topology.
+- Preserve the incumbent's ability to run every tscircuit viewer simulation. A candidate that makes any
+  previously available viewer simulation unavailable is worse, regardless of its apparent curve fit.
+- The server ranks complete candidates in this order: validation target, non-repairable errors,
+  stimulus causality, viewer availability, failed cases, failed series, worst error, then mean error.
+  Never trade a higher-priority gate for a lower-priority improvement.
+- Model syntax must run in tscircuit's installed simulator. Do not assume that a behavioral function is
+  portable merely because another SPICE implementation accepts it; prefer portable circuit primitives
+  and syntax already proven by the runnable incumbent.
 - For a power converter, every private state read by a source that drives the modeled output must itself be driven by the measured output response. Do not add a separate EN/VIN-only soft-start state; express startup through an EN-qualified, output-error-driven controller state.
 - Do not add per-sample lookup tables, figure-specific output forcing, hidden reference data, or other curve-fitting hacks.
 - Do not run ngspice. The server will run the exact promoted TSX with tscircuit after this artifact is complete.

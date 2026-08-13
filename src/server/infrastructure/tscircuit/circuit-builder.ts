@@ -1,5 +1,5 @@
 import { readdir, readFile, rm } from "node:fs/promises"
-import { join, relative } from "node:path"
+import { delimiter, join, relative } from "node:path"
 import type { AnyCircuitElement } from "circuit-json"
 import { isCircuitJson } from "../../component-circuit-json"
 import { ensureJobTscircuitRuntimeConfig } from "../../job-scaffold"
@@ -9,6 +9,14 @@ export type TscircuitCheck = "netlist" | "placement" | "routing-difficulty"
 
 const TSCIRCUIT_IDLE_TIMEOUT_MS = 60_000
 const TSCIRCUIT_WALL_TIMEOUT_MS = 5 * 60_000
+const PROJECT_NODE_MODULES = join(import.meta.dir, "../../../..", "node_modules")
+
+function tscircuitProcessEnvironment(): Record<string, string> {
+  return {
+    NODE_ENV: "development",
+    NODE_PATH: [PROJECT_NODE_MODULES, process.env.NODE_PATH].filter(Boolean).join(delimiter),
+  }
+}
 
 async function findCircuitJson(directory: string): Promise<string | undefined> {
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
@@ -90,15 +98,12 @@ export async function buildTscircuitSource(input: {
   build_args?: readonly string[]
   checks?: readonly TscircuitCheck[]
   render?: { pcb: boolean; schematic: boolean }
-  schematic_disabled?: boolean
   on_output?: (stream: "stdout" | "stderr", message: string) => void | Promise<void>
 }): Promise<CircuitBuildResult> {
   // A job can move between Docker and the host through normal/local execution.
   // Refresh the generated import URL for the environment that is actually
   // executing tsci instead of trusting the creator's absolute source path.
-  await ensureJobTscircuitRuntimeConfig(input.workspace, {
-    schematic_disabled: input.schematic_disabled,
-  })
+  await ensureJobTscircuitRuntimeConfig(input.workspace)
   const output_dir = join(input.workspace, "dist", input.output_stem)
   await rm(output_dir, { recursive: true, force: true })
   const errors: string[] = []
@@ -111,7 +116,7 @@ export async function buildTscircuitSource(input: {
         signal: input.signal,
         idle_timeout_ms: TSCIRCUIT_IDLE_TIMEOUT_MS,
         wall_timeout_ms: TSCIRCUIT_WALL_TIMEOUT_MS,
-        env: { NODE_ENV: "development" },
+        env: tscircuitProcessEnvironment(),
         on_output: input.on_output,
       })
     } catch (error) {
@@ -139,7 +144,7 @@ export async function buildTscircuitSource(input: {
       signal: input.signal,
       idle_timeout_ms: TSCIRCUIT_IDLE_TIMEOUT_MS,
       wall_timeout_ms: TSCIRCUIT_WALL_TIMEOUT_MS,
-      env: { NODE_ENV: "development" },
+      env: tscircuitProcessEnvironment(),
       on_output: input.on_output,
     })
   } catch (error) {

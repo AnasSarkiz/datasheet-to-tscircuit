@@ -72,22 +72,6 @@ test("generated job config keeps ngspice ready when CLI performance flags replac
   }
 })
 
-test("generated job config can temporarily disable schematic work", async () => {
-  const tmp_root = join(process.cwd(), "tmp")
-  await mkdir(tmp_root, { recursive: true })
-  const job_dir = await mkdtemp(join(tmp_root, "schematic-disabled-config-"))
-  try {
-    await ensureJobTscircuitRuntimeConfig(job_dir, { schematic_disabled: true })
-    expect(await Bun.file(join(job_dir, "tscircuit.config.ts")).text()).toContain("schematicDisabled: true")
-    await ensureJobTscircuitRuntimeConfig(job_dir)
-    expect(await Bun.file(join(job_dir, "tscircuit.config.ts")).text()).not.toContain(
-      "schematicDisabled: true",
-    )
-  } finally {
-    await rm(job_dir, { recursive: true, force: true })
-  }
-})
-
 test("every tsci build refreshes a config created in another execution environment", async () => {
   const tmp_root = join(process.cwd(), "tmp")
   await mkdir(tmp_root, { recursive: true })

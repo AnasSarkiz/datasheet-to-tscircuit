@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Job } from "@/shared/job-types"
-import { CircuitPreview, componentPreviewAvailableTabs } from "@/web/components/circuit-preview"
+import { CircuitPreview } from "@/web/components/circuit-preview"
 
 function jobWithFootprints(count: number): Job {
   return {
@@ -55,29 +55,4 @@ test("component preview shows one selector only for distinct physical footprints
     <CircuitPreview job={jobWithFootprints(1)} active_tab="pcb" on_active_tab_change={() => undefined} />,
   )
   expect(single).not.toContain("Multiple footprints")
-})
-
-test("application preview hides schematic when the build deliberately skipped it", () => {
-  expect(
-    componentPreviewAvailableTabs([
-      {
-        type: "source_net",
-        source_net_id: "source_net_input",
-        name: "INPUT",
-        member_source_group_ids: [],
-      },
-    ]),
-  ).toEqual(["code"])
-  expect(
-    componentPreviewAvailableTabs([
-      {
-        type: "schematic_component",
-        schematic_component_id: "schematic_component_u1",
-        source_component_id: "source_component_u1",
-        center: { x: 0, y: 0 },
-        size: { width: 1, height: 1 },
-        is_box_with_pins: false,
-      },
-    ]),
-  ).toEqual(["code", "schematic"])
 })

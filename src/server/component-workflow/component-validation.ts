@@ -15,6 +15,7 @@ import {
 } from "../job-artifact-validator"
 import type { JobStore } from "../job-store"
 import { getApplicationTargetPinCoverageErrors } from "./application-connectivity-verification"
+import type { TypicalApplicationPlan } from "./application-plan"
 import {
   type CircuitValidationRecord,
   type ApprovedComponentEvidence,
@@ -74,7 +75,6 @@ function componentShapeErrors(
 function applicationShapeErrors(
   circuit_json: AnyCircuitElement[],
   pcb_implementation: "verified" | "schematic_only" | undefined,
-  schematic_disabled = false,
 ): string[] {
   if (circuit_json.length === 0) return ["tsci produced empty Circuit JSON"]
   const circuit_records = records(circuit_json)
@@ -88,7 +88,7 @@ function applicationShapeErrors(
   if (u1_components.length !== 1) {
     errors.push(`expected exactly one target source_component named U1, found ${u1_components.length}`)
   }
-  if (!schematic_disabled && !circuit_records.some(({ type }) => type === "schematic_component")) {
+  if (!circuit_records.some(({ type }) => type === "schematic_component")) {
     errors.push("application produced no schematic_component")
   }
   const pcb_elements = circuit_records.filter(({ type }) => type.startsWith("pcb_"))
@@ -107,7 +107,6 @@ export interface CircuitBuildRecord {
   build_errors: string[]
   drc_errors: string[]
   circuit_json: AnyCircuitElement[]
-  schematic_disabled?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -125,7 +124,6 @@ export async function readCircuitBuildRecord(path: string): Promise<CircuitBuild
     !value.build_errors.every((entry) => typeof entry === "string") ||
     !Array.isArray(value.drc_errors) ||
     !value.drc_errors.every((entry) => typeof entry === "string") ||
-    (value.schematic_disabled !== undefined && typeof value.schematic_disabled !== "boolean") ||
     !isCircuitElementArray(value.circuit_json)
   ) {
     throw new Error(`Circuit build record is invalid: ${path}`)
@@ -136,20 +134,7 @@ export async function readCircuitBuildRecord(path: string): Promise<CircuitBuild
     build_errors: [...value.build_errors],
     drc_errors: [...value.drc_errors],
     circuit_json: value.circuit_json,
-    ...(value.schematic_disabled === undefined ? {} : { schematic_disabled: value.schematic_disabled }),
   }
-}
-
-export function hasExplicitApplicationSchematicPlacements(
-  source: string,
-  component_references: readonly string[],
-): boolean {
-  const opening_tags = source.match(/<[^<>]+>/g) ?? []
-  return component_references.every((reference) => {
-    const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    const name = new RegExp(`\\bname\\s*=\\s*["']${escaped}["']`, "i")
-    return opening_tags.some((tag) => name.test(tag) && /\bschX\s*=/.test(tag) && /\bschY\s*=/.test(tag))
-  })
 }
 
 interface CircuitBuildInput {
@@ -163,6 +148,8 @@ interface CircuitBuildInput {
   source_relative_path?: string
   output_stem?: string
   build_result_relative_path?: string
+  application_plan?: TypicalApplicationPlan
+  minimum_pad_clearance_mm?: number
 }
 
 export async function buildComponentCandidate(input: CircuitBuildInput): Promise<CircuitBuildRecord> {
@@ -197,7 +184,11 @@ export async function buildComponentCandidate(input: CircuitBuildInput): Promise
     const source_import = `./${source_relative_path.replace(/\.tsx$/, "")}`
     await Bun.write(
       fixture_path,
-      `import Component from ${JSON.stringify(source_import)}\nexport default () => <board><Component /></board>\n`,
+      `import Component from ${JSON.stringify(source_import)}\nexport default () => <board${
+        input.minimum_pad_clearance_mm === undefined
+          ? ""
+          : ` minPadEdgeToPadEdgeClearance={${input.minimum_pad_clearance_mm}}`
+      }><Component /></board>\n`,
     )
     try {
       const board = await buildTscircuitSource({
@@ -292,7 +283,7 @@ export async function validateBuiltComponent(input: {
 
 export async function buildApplicationCandidate(input: CircuitBuildInput): Promise<CircuitBuildRecord> {
   const extracted_application_plan = await readApprovedApplicationEvidence(input.job_dir)
-  if (extracted_application_plan.availability === "not_present") {
+  if (!input.application_plan && extracted_application_plan.availability === "not_present") {
     const record: CircuitBuildRecord = {
       version: 1,
       source_errors: [],
@@ -303,12 +294,11 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
     await writeJson(join(input.job_dir, "application-build.json"), record)
     return record
   }
-  const application_plan = await readComponentBoundApplicationEvidence(input.job_dir)
-  const source = await readFile(join(input.job_dir, "typical-application.circuit.tsx"), "utf8")
-  const schematic_disabled = !hasExplicitApplicationSchematicPlacements(
-    source,
-    application_plan.components.map(({ reference }) => reference),
-  )
+  const application_plan =
+    input.application_plan ?? (await readComponentBoundApplicationEvidence(input.job_dir))
+  const source_relative_path = input.source_relative_path ?? "typical-application.circuit.tsx"
+  const output_stem = input.output_stem ?? "typical-application"
+  const source = await readFile(join(input.job_dir, source_relative_path), "utf8")
   const source_errors: string[] = []
   try {
     validateGeneratedSource(source, "application")
@@ -321,8 +311,8 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
     try {
       const build = await buildTscircuitSource({
         workspace: input.job_dir,
-        source_file: "typical-application.circuit.tsx",
-        output_stem: "typical-application",
+        source_file: source_relative_path,
+        output_stem,
         tsci_bin: input.tsci_bin,
         process_runner: input.process_runner,
         signal: input.signal,
@@ -331,10 +321,9 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
           application_plan.pcb_implementation === "schematic_only"
             ? ["netlist"]
             : ["netlist", "placement", "routing-difficulty"],
-        schematic_disabled,
         render: {
           pcb: application_plan.pcb_implementation === "verified",
-          schematic: !schematic_disabled,
+          schematic: true,
         },
         on_output: input.on_output,
       })
@@ -352,9 +341,8 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
     build_errors,
     drc_errors: [],
     circuit_json,
-    schematic_disabled,
   }
-  await writeJson(join(input.job_dir, "application-build.json"), record)
+  await writeJson(join(input.job_dir, input.build_result_relative_path ?? "application-build.json"), record)
   return record
 }
 
@@ -363,39 +351,46 @@ export async function validateBuiltApplication(input: {
   job_dir: string
   job_store: JobStore
   build: CircuitBuildRecord
+  application_plan?: TypicalApplicationPlan
+  source_relative_path?: string
+  validation_result_relative_path?: string
+  update_job_validation?: boolean
 }): Promise<CircuitValidationRecord> {
   const extracted_application_plan = await readApprovedApplicationEvidence(input.job_dir)
-  if (extracted_application_plan.availability === "not_present") {
-    updateJobValidation(input.job_store, input.job_id, {
-      application_build: "not_applicable",
-      application_connectivity: "not_applicable",
-      application_schematic: "not_applicable",
-      application_visual: "not_applicable",
-    })
+  if (!input.application_plan && extracted_application_plan.availability === "not_present") {
+    if (input.update_job_validation !== false)
+      updateJobValidation(input.job_store, input.job_id, {
+        application_build: "not_applicable",
+        application_connectivity: "not_applicable",
+        application_schematic: "not_applicable",
+        application_visual: "not_applicable",
+      })
     const record: CircuitValidationRecord = {
       version: 1,
       passed: true,
       errors: [],
       circuit_json: [],
     }
-    await writeJson(join(input.job_dir, "application-validation.json"), record)
+    await writeJson(
+      join(input.job_dir, input.validation_result_relative_path ?? "application-validation.json"),
+      record,
+    )
     return record
   }
   const [application_plan, component_evidence] = await Promise.all([
-    readComponentBoundApplicationEvidence(input.job_dir),
+    input.application_plan ?? readComponentBoundApplicationEvidence(input.job_dir),
     readApprovedEvidence(input.job_dir),
   ])
-  const source = await readFile(join(input.job_dir, "typical-application.circuit.tsx"), "utf8")
+  const source = await readFile(
+    join(input.job_dir, input.source_relative_path ?? "typical-application.circuit.tsx"),
+    "utf8",
+  )
   const semantic_source_errors = getTypicalApplicationSourceErrors(
     source,
     application_plan.pcb_implementation,
     application_plan,
   )
-  const shape_errors = applicationShapeErrors(
-    input.build.circuit_json,
-    application_plan.pcb_implementation,
-    input.build.schematic_disabled,
-  )
+  const shape_errors = applicationShapeErrors(input.build.circuit_json, application_plan.pcb_implementation)
   const target_component_errors: string[] = []
   if (input.build.circuit_json.length > 0) {
     const validated_component = await readJson(join(input.job_dir, "component.circuit.json"))
@@ -425,32 +420,35 @@ export async function validateBuiltApplication(input: {
     ...shape_errors.map((error) => `shape: ${error}`),
     ...connectivity_errors.map((error) => `connectivity: ${error}`),
   ]
-  updateJobValidation(input.job_store, input.job_id, {
-    application_build:
-      input.build.build_errors.length === 0 &&
-      input.build.source_errors.length === 0 &&
-      shape_errors.length === 0
-        ? "passed"
-        : "failed",
-    application_connectivity:
-      connectivity_errors.length === 0 && shape_errors.length === 0 ? "passed" : "failed",
-    application_schematic: input.build.schematic_disabled
-      ? "not_applicable"
-      : input.build.source_errors.length === 0 &&
-          semantic_source_errors.length === 0 &&
-          shape_errors.length === 0
-        ? "passed"
-        : "failed",
-    application_visual:
-      input.build.build_errors.length === 0 && shape_errors.length === 0 ? "inconclusive" : "failed",
-  })
+  if (input.update_job_validation !== false)
+    updateJobValidation(input.job_store, input.job_id, {
+      application_build:
+        input.build.build_errors.length === 0 &&
+        input.build.source_errors.length === 0 &&
+        shape_errors.length === 0
+          ? "passed"
+          : "failed",
+      application_connectivity:
+        connectivity_errors.length === 0 && shape_errors.length === 0 ? "passed" : "failed",
+      application_schematic:
+        input.build.source_errors.length === 0 &&
+        semantic_source_errors.length === 0 &&
+        shape_errors.length === 0
+          ? "passed"
+          : "failed",
+      application_visual:
+        input.build.build_errors.length === 0 && shape_errors.length === 0 ? "inconclusive" : "failed",
+    })
   const record: CircuitValidationRecord = {
     version: 1,
     passed: errors.length === 0,
     errors,
     circuit_json: input.build.circuit_json,
   }
-  await writeJson(join(input.job_dir, "application-validation.json"), record)
+  await writeJson(
+    join(input.job_dir, input.validation_result_relative_path ?? "application-validation.json"),
+    record,
+  )
   return record
 }
 
