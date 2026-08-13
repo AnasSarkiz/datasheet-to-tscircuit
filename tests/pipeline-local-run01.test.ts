@@ -785,6 +785,103 @@ test("invalid dependency input is rejected before a Local directory is created",
   }
 })
 
+test("a full SPICE clone derives a fresh boundary after evidence approval", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "pipeline-fresh-spice-clone-"))
+  const sourceJobId = "approved-spice-source"
+  const sourceJobDir = join(temporaryRoot, ".runtime", "jobs", sourceJobId)
+  const sourceModelDir = join(sourceJobDir, "spice")
+  const jobStore = new JobStore()
+  const modelRunStore = new ModelRunStore()
+  const retainedDebugRef = "spice/runs/source/.pipeline/stages/01-find_reference_graphs"
+  try {
+    await mkdir(sourceModelDir, { recursive: true })
+    await writeFile(join(sourceJobDir, "datasheet.pdf"), "%PDF-1.4\nSPICE evidence clone\n%%EOF\n")
+    jobStore.createJob({
+      job_id: sourceJobId,
+      job_dir: sourceJobDir,
+      file_name: "approved-spice.pdf",
+    })
+    modelRunStore.createModelRun({
+      model_run_id: "source-model",
+      job_id: sourceJobId,
+      model_dir: sourceModelDir,
+      effort_multiplier: 1,
+    })
+    await writeRetainedInput({
+      sourceJobDir,
+      debugRef: retainedDebugRef,
+      envelope: {
+        version: 2,
+        kind: "pipeline_task_input",
+        pipeline_id: "spice_generation",
+        task_id: "find_reference_graphs",
+        run_id: "source-model",
+        execution_context: {
+          model_run_id: "source-model",
+          job_id: sourceJobId,
+          job_dir: sourceJobDir,
+          model_dir: sourceModelDir,
+          use_openai: false,
+          max_repair_attempts: 2,
+          invocation_id: "source-invocation",
+        },
+        depends_on: [],
+        dependency_statuses: {},
+        dependency_outputs: {},
+      },
+    })
+    modelRunStore.updateModelRun("source-model", {
+      pipeline: {
+        pipeline_id: "spice_generation",
+        status: "running",
+        sequence: 1,
+        started_at: "2026-08-12T00:00:00.000Z",
+        updated_at: "2026-08-12T00:01:00.000Z",
+        stage_results: {
+          find_reference_graphs: {
+            stage_id: "find_reference_graphs",
+            status: "completed",
+            debug_ref: retainedDebugRef,
+          },
+        },
+      },
+    })
+
+    const evidenceCommit = '{"version":1,"status":"approved"}\n'
+    await writeFile(join(sourceJobDir, "evidence-commit.json"), evidenceCommit)
+
+    const summary = (await runDebugCli([
+      "local",
+      "run",
+      "--job",
+      sourceJobId,
+      "--pipeline",
+      "spice_generation",
+      "--root",
+      temporaryRoot,
+    ])) as LocalRunSummary
+
+    expect(summary).toMatchObject({
+      execution_kind: "clone",
+      mode: "pipeline",
+      pipeline_id: "spice_generation",
+      source_job_id: sourceJobId,
+      status: "failed",
+      stage_results: {
+        find_reference_graphs: {
+          status: "failed",
+        },
+      },
+    })
+    expect(summary.target_job_id).not.toBe(sourceJobId)
+    expect(await readFile(join(summary.workspace_dir, "evidence-commit.json"), "utf8")).toBe(evidenceCommit)
+    const clonedInput = await loadPipelineTaskInputBundle(summary.input_path)
+    expect(clonedInput.manifest.files.some(({ path }) => path === "evidence-commit.json")).toBe(true)
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
 test("a SPICE clone receives new job/model identities and no cross-wired accepted publication", async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "pipeline-spice-clone-"))
   const jobsRoot = join(temporaryRoot, ".runtime", "jobs")

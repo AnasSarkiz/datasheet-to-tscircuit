@@ -223,8 +223,13 @@ async function runLocalJob({
   const retainedTask = selectedTask?.status === "pending" ? undefined : selectedTask
   const sourceJob = state.jobStore.getJob(sourceJobId)
   if (!sourceJob) throw new Error(`Job ${sourceJobId} was not found`)
+  const deriveFreshSpiceClone =
+    Boolean(referencedJobId) &&
+    mode === "pipeline" &&
+    registeredPipelineId === "spice_generation" &&
+    taskId === "find_reference_graphs"
   const derivedModelRunId =
-    !retainedTask &&
+    (!retainedTask || deriveFreshSpiceClone) &&
     mode === "pipeline" &&
     registeredPipelineId === "spice_generation" &&
     taskId === "find_reference_graphs"
@@ -266,7 +271,7 @@ async function runLocalJob({
   let executionStarted = false
   try {
     let bundle
-    if (retainedTask) {
+    if (retainedTask && !deriveFreshSpiceClone) {
       const inputPath = await resolveInputPath({ jobDir, debugRef: retainedTask.debug_ref })
       bundle = await loadPipelineTaskInputBundle(inputPath)
     } else {
