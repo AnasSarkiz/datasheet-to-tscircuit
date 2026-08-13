@@ -617,7 +617,7 @@ test("COMPONENT_PIPELINE publishes a validated documented application end to end
       component_visual: "inconclusive",
       application_build: "passed",
       application_connectivity: "passed",
-      application_schematic: "passed",
+      application_schematic: "not_applicable",
       application_visual: "inconclusive",
     },
   })
@@ -713,7 +713,7 @@ test("COMPONENT_PIPELINE publishes a validated documented application end to end
   })
   expect(await Bun.file(join(job_dir, "dist", "index", "pcb.png")).exists()).toBe(true)
   expect(await Bun.file(join(job_dir, "dist", "index", "schematic.png")).exists()).toBe(true)
-  expect(await Bun.file(join(job_dir, "dist", "typical-application", "schematic.png")).exists()).toBe(true)
+  expect(await Bun.file(join(job_dir, "dist", "typical-application", "schematic.png")).exists()).toBe(false)
 
   expect(
     process_runner.calls.some(
@@ -728,6 +728,14 @@ test("COMPONENT_PIPELINE publishes a validated documented application end to end
         command.includes("--disable-pcb"),
     ),
   ).toBe(true)
+  expect(
+    process_runner.calls.some(
+      ({ command }) =>
+        command[1] === "build" &&
+        command[2] === "typical-application.circuit.tsx" &&
+        command.includes("--schematic-svgs"),
+    ),
+  ).toBe(false)
 })
 
 test("COMPONENT_PIPELINE publishes every distinct physical footprint without changing its default", async () => {

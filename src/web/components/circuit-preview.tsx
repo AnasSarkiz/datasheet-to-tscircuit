@@ -13,6 +13,18 @@ const CircuitJsonPreview = lazy(async () => {
 
 export type ComponentPreviewTab = Extract<TabId, "code" | "pcb" | "schematic">
 
+export function componentPreviewAvailableTabs(
+  circuit_json: NonNullable<Job["circuit_json"]>,
+): ComponentPreviewTab[] {
+  return [
+    "code",
+    ...(circuit_json.some((element) => element.type.startsWith("pcb_")) ? (["pcb"] as const) : []),
+    ...(circuit_json.some((element) => element.type.startsWith("schematic_"))
+      ? (["schematic"] as const)
+      : []),
+  ]
+}
+
 function EmptyPreview({ job, artifact }: { job: Job; artifact: ComponentArtifact }) {
   const is_application = artifact === "typical_application"
   const is_cancelled = job.display_status === "cancelled"
@@ -91,10 +103,8 @@ function ArtifactRunframe({
   const code = is_application ? job.typical_application_code : job.component_code
 
   if (!circuit_json) return <EmptyPreview job={job} artifact={artifact} />
-  const has_pcb_artifact = circuit_json.some((element) => element.type.startsWith("pcb_"))
-  const available_tabs: ComponentPreviewTab[] = has_pcb_artifact
-    ? ["code", "pcb", "schematic"]
-    : ["code", "schematic"]
+  const available_tabs = componentPreviewAvailableTabs(circuit_json)
+  const effective_active_tab = available_tabs.includes(active_tab) ? active_tab : available_tabs[0]!
 
   return (
     <Suspense fallback={<EmptyPreview job={job} artifact={artifact} />}>
@@ -105,8 +115,8 @@ function ArtifactRunframe({
         showCodeTab={Boolean(code)}
         codeTabContent={<CodePanel job={job} artifact={artifact} local_run_id={local_run_id} />}
         availableTabs={available_tabs}
-        defaultActiveTab={active_tab}
-        defaultTab={active_tab}
+        defaultActiveTab={effective_active_tab}
+        defaultTab={effective_active_tab}
         onActiveTabChange={(tab) => {
           if (tab === "code" || tab === "pcb" || tab === "schematic") on_active_tab_change(tab)
         }}

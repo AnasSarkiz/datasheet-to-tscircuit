@@ -2,7 +2,11 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
-import { validateApplication, validateComponent } from "@/server/component-workflow/component-validation"
+import {
+  hasExplicitApplicationSchematicPlacements,
+  validateApplication,
+  validateComponent,
+} from "@/server/component-workflow/component-validation"
 import type { ProcessRunner } from "@/server/infrastructure/process"
 import { JobStore } from "@/server/job-store"
 import { publishCommittedEvidenceFixture } from "./fixtures/committed-evidence"
@@ -104,6 +108,27 @@ function emptyCircuitRunner(on_build: (source: string) => void): ProcessRunner {
   }
 }
 
+test("application schematic generation requires explicit placement for every component", () => {
+  expect(
+    hasExplicitApplicationSchematicPlacements(
+      '<board><chip name="U1" schX={0} schY={0} /><capacitor name="C1" schX={3} schY={1} /></board>',
+      ["U1", "C1"],
+    ),
+  ).toBe(true)
+  expect(
+    hasExplicitApplicationSchematicPlacements(
+      '<board><chip name="U1" schX={0} schY={0} /><capacitor name="C1" /></board>',
+      ["U1", "C1"],
+    ),
+  ).toBe(false)
+  expect(
+    hasExplicitApplicationSchematicPlacements(
+      '<board><chip name="U1" schX={0} /><capacitor name="C1" schX={3} schY={1} /></board>',
+      ["U1", "C1"],
+    ),
+  ).toBe(false)
+})
+
 test("component and application validators reject empty Circuit JSON", async () => {
   const job_dir = await mkdtemp(join(tmpdir(), "empty-circuit-validation-"))
   const job_store = new JobStore()
@@ -180,7 +205,7 @@ test("component and application validators reject empty Circuit JSON", async () 
     expect(job_store.getJob("empty-circuit")?.validation).toMatchObject({
       application_build: "failed",
       application_connectivity: "failed",
-      application_schematic: "failed",
+      application_schematic: "not_applicable",
       application_visual: "failed",
     })
     expect(builds).toEqual(["index.circuit.tsx", "index.circuit.tsx", "typical-application.circuit.tsx"])

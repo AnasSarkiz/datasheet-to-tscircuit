@@ -74,6 +74,7 @@ function componentShapeErrors(
 function applicationShapeErrors(
   circuit_json: AnyCircuitElement[],
   pcb_implementation: "verified" | "schematic_only" | undefined,
+  schematic_disabled = false,
 ): string[] {
   if (circuit_json.length === 0) return ["tsci produced empty Circuit JSON"]
   const circuit_records = records(circuit_json)
@@ -87,7 +88,7 @@ function applicationShapeErrors(
   if (u1_components.length !== 1) {
     errors.push(`expected exactly one target source_component named U1, found ${u1_components.length}`)
   }
-  if (!circuit_records.some(({ type }) => type === "schematic_component")) {
+  if (!schematic_disabled && !circuit_records.some(({ type }) => type === "schematic_component")) {
     errors.push("application produced no schematic_component")
   }
   const pcb_elements = circuit_records.filter(({ type }) => type.startsWith("pcb_"))
@@ -106,6 +107,7 @@ export interface CircuitBuildRecord {
   build_errors: string[]
   drc_errors: string[]
   circuit_json: AnyCircuitElement[]
+  schematic_disabled?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,6 +125,7 @@ export async function readCircuitBuildRecord(path: string): Promise<CircuitBuild
     !value.build_errors.every((entry) => typeof entry === "string") ||
     !Array.isArray(value.drc_errors) ||
     !value.drc_errors.every((entry) => typeof entry === "string") ||
+    (value.schematic_disabled !== undefined && typeof value.schematic_disabled !== "boolean") ||
     !isCircuitElementArray(value.circuit_json)
   ) {
     throw new Error(`Circuit build record is invalid: ${path}`)
@@ -133,7 +136,20 @@ export async function readCircuitBuildRecord(path: string): Promise<CircuitBuild
     build_errors: [...value.build_errors],
     drc_errors: [...value.drc_errors],
     circuit_json: value.circuit_json,
+    ...(value.schematic_disabled === undefined ? {} : { schematic_disabled: value.schematic_disabled }),
   }
+}
+
+export function hasExplicitApplicationSchematicPlacements(
+  source: string,
+  component_references: readonly string[],
+): boolean {
+  const opening_tags = source.match(/<[^<>]+>/g) ?? []
+  return component_references.every((reference) => {
+    const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const name = new RegExp(`\\bname\\s*=\\s*["']${escaped}["']`, "i")
+    return opening_tags.some((tag) => name.test(tag) && /\bschX\s*=/.test(tag) && /\bschY\s*=/.test(tag))
+  })
 }
 
 interface CircuitBuildInput {
@@ -289,6 +305,10 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
   }
   const application_plan = await readComponentBoundApplicationEvidence(input.job_dir)
   const source = await readFile(join(input.job_dir, "typical-application.circuit.tsx"), "utf8")
+  const schematic_disabled = !hasExplicitApplicationSchematicPlacements(
+    source,
+    application_plan.components.map(({ reference }) => reference),
+  )
   const source_errors: string[] = []
   try {
     validateGeneratedSource(source, "application")
@@ -311,9 +331,10 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
           application_plan.pcb_implementation === "schematic_only"
             ? ["netlist"]
             : ["netlist", "placement", "routing-difficulty"],
+        schematic_disabled,
         render: {
           pcb: application_plan.pcb_implementation === "verified",
-          schematic: true,
+          schematic: !schematic_disabled,
         },
         on_output: input.on_output,
       })
@@ -331,6 +352,7 @@ export async function buildApplicationCandidate(input: CircuitBuildInput): Promi
     build_errors,
     drc_errors: [],
     circuit_json,
+    schematic_disabled,
   }
   await writeJson(join(input.job_dir, "application-build.json"), record)
   return record
@@ -369,7 +391,11 @@ export async function validateBuiltApplication(input: {
     application_plan.pcb_implementation,
     application_plan,
   )
-  const shape_errors = applicationShapeErrors(input.build.circuit_json, application_plan.pcb_implementation)
+  const shape_errors = applicationShapeErrors(
+    input.build.circuit_json,
+    application_plan.pcb_implementation,
+    input.build.schematic_disabled,
+  )
   const target_component_errors: string[] = []
   if (input.build.circuit_json.length > 0) {
     const validated_component = await readJson(join(input.job_dir, "component.circuit.json"))
@@ -408,10 +434,11 @@ export async function validateBuiltApplication(input: {
         : "failed",
     application_connectivity:
       connectivity_errors.length === 0 && shape_errors.length === 0 ? "passed" : "failed",
-    application_schematic:
-      input.build.source_errors.length === 0 &&
-      semantic_source_errors.length === 0 &&
-      shape_errors.length === 0
+    application_schematic: input.build.schematic_disabled
+      ? "not_applicable"
+      : input.build.source_errors.length === 0 &&
+          semantic_source_errors.length === 0 &&
+          shape_errors.length === 0
         ? "passed"
         : "failed",
     application_visual:

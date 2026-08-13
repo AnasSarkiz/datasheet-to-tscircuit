@@ -90,12 +90,15 @@ export async function buildTscircuitSource(input: {
   build_args?: readonly string[]
   checks?: readonly TscircuitCheck[]
   render?: { pcb: boolean; schematic: boolean }
+  schematic_disabled?: boolean
   on_output?: (stream: "stdout" | "stderr", message: string) => void | Promise<void>
 }): Promise<CircuitBuildResult> {
   // A job can move between Docker and the host through normal/local execution.
   // Refresh the generated import URL for the environment that is actually
   // executing tsci instead of trusting the creator's absolute source path.
-  await ensureJobTscircuitRuntimeConfig(input.workspace)
+  await ensureJobTscircuitRuntimeConfig(input.workspace, {
+    schematic_disabled: input.schematic_disabled,
+  })
   const output_dir = join(input.workspace, "dist", input.output_stem)
   await rm(output_dir, { recursive: true, force: true })
   const errors: string[] = []
